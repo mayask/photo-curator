@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
+  <link rel="icon" href="{{ url_for('static', path='favicon.svg') }}?v={{ asset_version }}" type="image/svg+xml">
   <title>{% block title %}{{ app_name }}{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v={{ asset_version }}">
   <script defer src="{{ url_for('static', path='app.js') }}?v={{ asset_version }}"></script>

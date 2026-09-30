@@ -20,6 +20,10 @@ def test_core_web_pages_and_health_render(settings):
             assert response.status_code == 200, response.text
             assert "Photo Book" in response.text
 
+        # HTML select controls submit empty values for inactive filters.
+        response = client.get("/photos?q=&year=&faces=true&located=")
+        assert response.status_code == 200, response.text
+
         response = client.get("/api/status")
         assert response.status_code == 200
         assert response.json()["job"] is None

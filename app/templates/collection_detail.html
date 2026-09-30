@@ -11,7 +11,7 @@
     </div>
     <p>{{ collection.description }}</p>
     <div class="detail-meta">
-      <span>{{ total }} photos</span>
+      <span>{{ collection_total }} photos{% if decision_filter %} · {{ total }} shown{% endif %}</span>
       {% if collection.starts_at %}<span>{{ collection.starts_at|datetime }}{% if collection.ends_at and collection.ends_at.date() != collection.starts_at.date() %} – {{ collection.ends_at|datetime }}{% endif %}</span>{% endif %}
       <span><b data-decision-count="keep">{{ decisions.get('keep', 0) }}</b> kept</span>
       <span><b data-decision-count="reject">{{ decisions.get('reject', 0) }}</b> rejected</span>

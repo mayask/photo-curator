@@ -97,6 +97,7 @@ The native SMB mode is simpler in Portainer and does not require a privileged co
 | `DATA_DIR` | `/data` in Docker | Database, thumbnails, previews, temporary files |
 | `AUTO_START` | `true` | Start initial and periodic full scans |
 | `SCAN_INTERVAL_HOURS` | `24` | Rescan interval; `0` disables periodic scans |
+| `SCAN_MAX_FILES` | `0` | QA/trial cap; `0` scans all files, capped scans disable missing-file cleanup |
 | `MAX_FILE_MB` | `250` | Per-file transfer safety limit |
 | `MAX_IMAGE_MEGAPIXELS` | `100` | Decoded-image memory safety limit |
 | `THUMB_SIZE` / `PREVIEW_SIZE` | `360` / `1600` | Longest edge of local derivatives |

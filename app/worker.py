@@ -255,16 +255,23 @@ class WorkerService:
                 f"Discovered {discovered:,} supported photos",
             )
 
+        scan_limited = False
         for entry in source.walk():
             self._check_cancelled(job_id)
             batch.append(entry)
+            if (
+                self.settings.scan_max_files
+                and discovered + len(batch) >= self.settings.scan_max_files
+            ):
+                scan_limited = True
+                break
             if len(batch) >= max(1, self.settings.worker_batch_size):
                 flush(batch)
                 batch.clear()
         flush(batch)
 
         with session_scope() as session:
-            if source.walk_warnings == 0:
+            if source.walk_warnings == 0 and not scan_limited:
                 session.execute(
                     update(Photo)
                     .where(
@@ -274,6 +281,11 @@ class WorkerService:
                     .values(active=False)
                 )
                 message = f"Scan complete: {discovered:,} photos indexed"
+            elif scan_limited:
+                message = (
+                    f"QA scan limit reached after {discovered:,} photos; "
+                    "missing-file cleanup was skipped for safety"
+                )
             else:
                 message = (
                     f"Scan indexed {discovered:,} photos with {source.walk_warnings} unreadable "

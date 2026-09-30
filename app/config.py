@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     scan_interval_hours: float = Field(default=24.0, ge=0)
     worker_batch_size: int = Field(default=25, ge=1, le=10_000)
     worker_poll_seconds: float = Field(default=2.0, ge=0.1, le=60)
+    scan_max_files: int = Field(default=0, ge=0)
     max_analysis_attempts: int = Field(default=3, ge=1, le=100)
     max_file_mb: int = Field(default=250, ge=1)
     max_image_megapixels: int = Field(default=100, ge=1)
@@ -137,9 +138,8 @@ class Settings(BaseSettings):
 
     def source_summary(self) -> str:
         if self.source_mode == "local":
-            return f"local:{self.photo_root} (read-only expected)"
-        suffix = f"/{self.smb_path}" if self.smb_path else ""
-        return f"smb://{self.smb_host}/{self.smb_share}{suffix}"
+            return "Local photo library (read-only mount expected)"
+        return "SMB photo library (read-only account)"
 
 
 @lru_cache(maxsize=1)

@@ -86,6 +86,14 @@ def test_partial_scan_never_deactivates_unseen_photos(settings):
             select(Photo.active).where(Photo.relative_path == "existing.jpg")
         ) is True
 
+    settings.scan_max_files = 1
+    worker._scan(job_id, ScanSource(warnings=0))  # type: ignore[arg-type]
+    with session_scope() as session:
+        assert session.scalar(
+            select(Photo.active).where(Photo.relative_path == "existing.jpg")
+        ) is True
+
+    settings.scan_max_files = 0
     worker._scan(job_id, ScanSource(warnings=0))  # type: ignore[arg-type]
     with session_scope() as session:
         assert session.scalar(

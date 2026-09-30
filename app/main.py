@@ -70,6 +70,29 @@ def _safe_csv_text(value: str) -> str:
     return f"'{value}" if value.startswith(("=", "+", "-", "@", "\t", "\r")) else value
 
 
+def _optional_bool(value: str | None, field_name: str) -> bool | None:
+    if value in (None, ""):
+        return None
+    normalized = value.casefold()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise HTTPException(422, f"{field_name} must be true or false")
+
+
+def _optional_year(value: str | None) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        year = int(value)
+    except ValueError as exc:
+        raise HTTPException(422, "year must be a number") from exc
+    if not 1900 <= year <= 9998:
+        raise HTTPException(422, "year is outside the supported range")
+    return year
+
+
 def create_app(settings: Settings | None = None, start_worker: bool = True) -> FastAPI:
     settings = settings or get_settings()
     settings.ensure_directories()
@@ -297,6 +320,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
             page=page,
             pages=max(1, (total + per_page - 1) // per_page),
             total=total,
+            collection_total=sum(decisions.values()),
             decisions=decisions,
             decision_filter=decision,
         )
@@ -306,27 +330,30 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
         request: Request,
         db: DbSession,
         page: Annotated[int, Query(ge=1)] = 1,
-        year: Annotated[int | None, Query(ge=1900, le=9998)] = None,
-        faces: bool | None = None,
-        located: bool | None = None,
+        year: str | None = None,
+        faces: str | None = None,
+        located: str | None = None,
         q: Annotated[str | None, Query(max_length=200)] = None,
         per_page: Annotated[int, Query(ge=20, le=200)] = 80,
     ):
+        selected_year = _optional_year(year)
+        selected_faces = _optional_bool(faces, "faces")
+        selected_located = _optional_bool(located, "located")
         conditions = [Photo.active.is_(True)]
-        if year:
+        if selected_year:
             conditions.extend(
                 (
-                    Photo.capture_at >= datetime(year, 1, 1),
-                    Photo.capture_at < datetime(year + 1, 1, 1),
+                    Photo.capture_at >= datetime(selected_year, 1, 1),
+                    Photo.capture_at < datetime(selected_year + 1, 1, 1),
                 )
             )
-        if faces is True:
+        if selected_faces is True:
             conditions.append(Photo.face_count > 0)
-        if faces is False:
+        if selected_faces is False:
             conditions.append(Photo.face_count == 0)
-        if located is True:
+        if selected_located is True:
             conditions.append(Photo.latitude.is_not(None))
-        if located is False:
+        if selected_located is False:
             conditions.append(Photo.latitude.is_(None))
         if q:
             pattern = f"%{q}%"
@@ -366,9 +393,9 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
             pages=max(1, (total + per_page - 1) // per_page),
             total=total,
             years=years,
-            selected_year=year,
-            faces=faces,
-            located=located,
+            selected_year=selected_year,
+            faces=selected_faces,
+            located=selected_located,
             q=q or "",
         )
 
