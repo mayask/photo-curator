@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ photo.file_name }} · {{ app_name }}{% endblock %}
+{% block content %}
+<a class="back-link" href="javascript:history.back()">← Back</a>
+<section class="photo-detail">
+  <div class="photo-stage">
+    {% if photo.preview_path %}
+    <div class="preview-wrap">
+      <img src="/media/{{ photo.preview_path }}" alt="{{ photo.file_name }}">
+      {% for face in photo.faces %}<span class="face-box" style="left:{{ face.x * 100 }}%;top:{{ face.y * 100 }}%;width:{{ face.width * 100 }}%;height:{{ face.height * 100 }}%" title="Detected face"></span>{% endfor %}
+    </div>
+    {% else %}<div class="image-placeholder large">Preview unavailable ({{ photo.analysis_status }})</div>{% endif %}
+  </div>
+  <aside class="photo-info">
+    <p class="eyebrow">Photo details</p>
+    <h1>{{ photo.file_name }}</h1>
+    <p class="path-text" title="{{ photo.relative_path }}">{{ photo.relative_path }}</p>
+
+    <div class="score-block">
+      <div><strong>{{ (photo.quality_score * 100)|round|int if photo.quality_score is not none else '—' }}</strong><span>overall quality</span></div>
+      <div class="score-bars">
+        {% for label, value in [('Sharpness', photo.sharpness_score), ('Exposure', photo.exposure_score), ('Contrast', photo.contrast_score), ('Color', photo.color_score), ('Resolution', photo.resolution_score)] %}
+        <label>{{ label }}<span><i style="width:{{ (value * 100)|round|int if value is not none else 0 }}%"></i></span></label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="rating" data-photo-id="{{ photo.id }}"><span>Your rating</span>{% for star in range(1, 6) %}<button data-rating="{{ star }}" class="{% if photo.manual_rating and star <= photo.manual_rating %}active{% endif %}">★</button>{% endfor %}</div>
+
+    <dl class="metadata-list">
+      <div><dt>Captured</dt><dd>{{ photo.capture_at|datetime }} <small>via {{ photo.capture_source or 'unknown' }}</small></dd></div>
+      <div><dt>Dimensions</dt><dd>{{ photo.width or '?' }} × {{ photo.height or '?' }} · {{ photo.size_bytes|filesize }}</dd></div>
+      <div><dt>Camera</dt><dd>{{ [photo.camera_make, photo.camera_model]|select|join(' ') or 'Unknown' }}{% if photo.lens_model %}<small>{{ photo.lens_model }}</small>{% endif %}</dd></div>
+      <div><dt>Exposure</dt><dd>{% if photo.exposure_time %}{{ photo.exposure_time }}{% endif %}{% if photo.aperture %} · ƒ/{{ photo.aperture|round(1) }}{% endif %}{% if photo.iso %} · ISO {{ photo.iso }}{% endif %}{% if not photo.exposure_time and not photo.aperture and not photo.iso %}Unknown{% endif %}</dd></div>
+      <div><dt>Place</dt><dd>{{ [photo.place_city, photo.place_region, photo.place_country]|select|join(', ') or 'No GPS location' }}</dd></div>
+      <div><dt>Faces</dt><dd>{{ photo.face_count }}</dd></div>
+      <div><dt>Source status</dt><dd><span class="status-label {{ photo.analysis_status }}">{{ photo.analysis_status }}</span></dd></div>
+    </dl>
+
+    {% if photo.collection_links %}
+    <div class="member-of"><h3>Appears in</h3>{% for link in photo.collection_links[:12] %}<a href="/collections/{{ link.collection.id }}">{{ link.collection.title }} <span>{{ link.decision }}</span></a>{% endfor %}</div>
+    {% endif %}
+  </aside>
+</section>
+{% endblock %}

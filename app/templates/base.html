@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  <script defer src="{{ url_for('static', path='app.js') }}"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">
+      <span class="brand-mark">PC</span>
+      <span><strong>Photo Book</strong><small>curator</small></span>
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Overview</a>
+      <a href="/collections" class="{% if request.url.path.startswith('/collections') %}active{% endif %}">Collections</a>
+      <a href="/photos" class="{% if request.url.path.startswith('/photos') %}active{% endif %}">Library</a>
+      <a href="/status" class="{% if request.url.path == '/status' %}active{% endif %}">Activity</a>
+    </nav>
+    <div class="source-badge" title="The source library is opened read-only">
+      <span class="status-dot"></span> Read-only source
+    </div>
+  </header>
+
+  <div id="job-banner" class="job-banner hidden" role="status">
+    <div>
+      <strong id="job-phase">Working</strong>
+      <span id="job-message"></span>
+    </div>
+    <div class="progress"><span id="job-progress"></span></div>
+  </div>
+
+  <main class="page-shell">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer>
+    <span>{{ app_name }} v{{ version }}</span>
+    <span>{{ source_summary }}</span>
+    <span>Originals are never modified</span>
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

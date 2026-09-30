@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% from "_collection_card.html" import collection_card %}
+{% block title %}Collections · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><p class="eyebrow">Automatic storytelling</p><h1>Collections</h1><p>Each set is a suggestion, not a verdict. Open one to review its ranked photos.</p></div>
+  <button class="secondary" data-job="collections">Rebuild suggestions</button>
+</section>
+
+<form class="filter-bar" method="get">
+  <label>Type
+    <select name="kind" onchange="this.form.submit()">
+      <option value="">All types</option>
+      {% for item in kinds %}<option value="{{ item }}" {% if item == selected_kind %}selected{% endif %}>{{ item|replace('-', ' ')|title }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Status
+    <select name="status" onchange="this.form.submit()">
+      <option value="">Visible</option>
+      {% for item in ['unreviewed', 'reviewing', 'shortlisted', 'complete', 'hidden'] %}<option value="{{ item }}" {% if item == selected_status %}selected{% endif %}>{{ item|title }}</option>{% endfor %}
+    </select>
+  </label>
+  {% if selected_kind or selected_status %}<a href="/collections" class="clear-filter">Clear filters</a>{% endif %}
+  <span class="result-count">{{ collections|length }} collections</span>
+</form>
+
+{% if collections %}
+<div class="collection-grid">
+  {% for collection in collections %}{{ collection_card(collection, counts) }}{% endfor %}
+</div>
+{% else %}
+<div class="empty-state"><h3>No matching collections</h3><p>Try another filter, or run curation after more photos finish analysis.</p></div>
+{% endif %}
+{% endblock %}

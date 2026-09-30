@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% from "_collection_card.html" import collection_card %}
+{% block title %}Overview · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">Your private photo-book assistant</p>
+    <h1>Turn a photo archive into<br><em>stories worth printing.</em></h1>
+    <p class="lede">Photos are indexed from your read-only share, ranked locally, and organized into reviewable trips, days, people, places, series, and highlights.</p>
+  </div>
+  <div class="hero-actions">
+    <button class="primary" data-job="full">Scan &amp; curate now</button>
+    <a class="button secondary" href="/collections">Review collections</a>
+  </div>
+</section>
+
+<section class="stat-grid" aria-label="Library summary">
+  <article><strong>{{ "{:,}".format(photo_count) }}</strong><span>photos indexed</span></article>
+  <article><strong>{{ "{:,}".format(analyzed_count) }}</strong><span>fully analyzed</span></article>
+  <article><strong>{{ "{:,}".format(collection_count) }}</strong><span>suggested collections</span></article>
+  <article><strong>{{ "{:,}".format(keep_count) }}</strong><span>photos shortlisted</span></article>
+  <article><strong>{{ "{:,}".format(face_count) }}</strong><span>photos with faces</span></article>
+  <article><strong>{{ "{:,}".format(located_count) }}</strong><span>photos with places</span></article>
+</section>
+
+{% if active_job %}
+<section class="active-work panel">
+  <div>
+    <p class="eyebrow">Analysis in progress</p>
+    <h2>{{ active_job.phase|replace('_', ' ')|title }}</h2>
+    <p>{{ active_job.message }}</p>
+  </div>
+  <div class="work-progress">
+    {% if active_job.progress_total %}
+      <strong>{{ ((active_job.progress_current / active_job.progress_total) * 100)|round|int }}%</strong>
+      <progress max="{{ active_job.progress_total }}" value="{{ active_job.progress_current }}"></progress>
+    {% else %}
+      <strong>{{ "{:,}".format(active_job.progress_current) }}</strong>
+      <span>items discovered</span>
+    {% endif %}
+  </div>
+</section>
+{% endif %}
+
+<section class="section-heading">
+  <div>
+    <p class="eyebrow">Fresh suggestions</p>
+    <h2>Collections to explore</h2>
+  </div>
+  <a href="/collections">View all <span aria-hidden="true">→</span></a>
+</section>
+
+{% if collections %}
+<div class="collection-grid">
+  {% for collection in collections %}{{ collection_card(collection) }}{% endfor %}
+</div>
+{% elif active_job %}
+<div class="empty-state"><h3>Collections are on the way</h3><p>The first pass can take a while on a large NAS. You can close this page; work resumes safely in the background.</p></div>
+{% else %}
+<div class="empty-state"><h3>Ready to discover your archive</h3><p>Start a scan to index metadata and build the first set of suggestions.</p><button class="primary" data-job="full">Start first scan</button></div>
+{% endif %}
+
+<section class="method-strip">
+  <div><span>01</span><h3>Read safely</h3><p>SMB is opened read-only. Originals remain untouched.</p></div>
+  <div><span>02</span><h3>Understand</h3><p>Time, GPS, faces, quality, hashes, and EXIF are analyzed locally.</p></div>
+  <div><span>03</span><h3>Curate</h3><p>Algorithms suggest chapters and rank representative frames.</p></div>
+  <div><span>04</span><h3>You decide</h3><p>Keep or reject each suggestion and export a print manifest.</p></div>
+</section>
+{% endblock %}

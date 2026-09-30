@@ -1,0 +1,29 @@
+services:
+  photo-curator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: photo-book-curator:local
+    container_name: photo-book-curator
+    restart: unless-stopped
+    stop_grace_period: 30s
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /data
+      DATABASE_URL: sqlite:////data/photo-curator.db
+      APP_PORT: 8000
+    ports:
+      - "${WEB_PORT:-8787}:8000"
+    volumes:
+      - photo-curator-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+volumes:
+  photo-curator-data:
+    name: photo-curator-data

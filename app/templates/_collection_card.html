@@ -1,0 +1,25 @@
+{% macro collection_card(collection, counts=None) %}
+<a class="collection-card" href="/collections/{{ collection.id }}">
+  <div class="collection-cover">
+    {% if collection.cover_photo and collection.cover_photo.thumb_path %}
+      <img src="/media/{{ collection.cover_photo.thumb_path }}" alt="" loading="lazy">
+    {% else %}
+      <div class="image-placeholder"><span>{{ collection.kind[:1]|upper }}</span></div>
+    {% endif %}
+    <span class="kind-label">{{ collection.kind|replace('-', ' ') }}</span>
+  </div>
+  <div class="collection-copy">
+    <h3>{{ collection.title }}</h3>
+    <p>{{ collection.description|truncate(115) }}</p>
+    <div class="card-meta">
+      {% if counts and collection.id in counts %}
+        <span>{{ counts[collection.id][0] }} photos</span>
+        {% if counts[collection.id][1] %}<span class="kept">{{ counts[collection.id][1] }} kept</span>{% endif %}
+      {% elif collection.starts_at %}
+        <span>{{ collection.starts_at|datetime }}</span>
+      {% endif %}
+      <span class="status-label {{ collection.status }}">{{ collection.status }}</span>
+    </div>
+  </div>
+</a>
+{% endmacro %}

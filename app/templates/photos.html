@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Library · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><p class="eyebrow">Indexed archive</p><h1>Photo library</h1><p>Browse local previews and metadata without changing source files.</p></div>
+  <button class="secondary" data-job="analyze">Analyze pending</button>
+</section>
+
+<form class="filter-bar library-filters" method="get">
+  <label class="search-field">Search
+    <input type="search" name="q" value="{{ q }}" placeholder="Path, place, camera…">
+  </label>
+  <label>Year
+    <select name="year">
+      <option value="">Any</option>
+      {% for item in years %}<option value="{{ item }}" {% if item == selected_year %}selected{% endif %}>{{ item }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>People
+    <select name="faces">
+      <option value="">Any</option>
+      <option value="true" {% if faces is sameas true %}selected{% endif %}>Faces</option>
+      <option value="false" {% if faces is sameas false %}selected{% endif %}>No faces</option>
+    </select>
+  </label>
+  <label>Location
+    <select name="located">
+      <option value="">Any</option>
+      <option value="true" {% if located is sameas true %}selected{% endif %}>GPS present</option>
+      <option value="false" {% if located is sameas false %}selected{% endif %}>No GPS</option>
+    </select>
+  </label>
+  <button type="submit" class="secondary">Apply</button>
+  <a href="/photos" class="clear-filter">Clear</a>
+  <span class="result-count">{{ "{:,}".format(total) }} photos</span>
+</form>
+
+{% if photos %}
+<div class="library-grid">
+  {% for photo in photos %}
+  <a class="library-photo" href="/photos/{{ photo.id }}">
+    <div>
+      {% if photo.thumb_path %}<img src="/media/{{ photo.thumb_path }}" alt="{{ photo.file_name }}" loading="lazy">{% else %}<div class="image-placeholder">{{ photo.analysis_status }}</div>{% endif %}
+      {% if photo.quality_score is not none %}<span class="quality-badge">{{ (photo.quality_score * 100)|round|int }}</span>{% endif %}
+    </div>
+    <strong>{{ photo.capture_at.strftime('%b %-d, %Y') if photo.capture_at else photo.file_name|truncate(24) }}</strong>
+    <small>{% if photo.place_city %}{{ photo.place_city }}{% elif photo.camera_model %}{{ photo.camera_model }}{% else %}{{ photo.analysis_status }}{% endif %}</small>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state"><h3>No matching photos</h3><p>Change the filters or wait for the scanner to discover images.</p></div>
+{% endif %}
+
+{% if pages > 1 %}
+<nav class="pagination">
+  {% set suffix %}{% if selected_year %}&year={{ selected_year }}{% endif %}{% if faces is not none %}&faces={{ faces|string|lower }}{% endif %}{% if located is not none %}&located={{ located|string|lower }}{% endif %}{% if q %}&q={{ q|urlencode }}{% endif %}{% endset %}
+  {% if page > 1 %}<a href="?page={{ page - 1 }}{{ suffix }}">← Previous</a>{% endif %}
+  <span>Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a href="?page={{ page + 1 }}{{ suffix }}">Next →</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Activity · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><p class="eyebrow">Long-running work</p><h1>Activity &amp; health</h1><p>Jobs are checkpointed in the database and recover after container restarts.</p></div>
+  <div class="button-row"><button class="primary" data-job="full">Full scan</button><button class="secondary" data-job="scan">Index only</button><button class="secondary" data-job="analyze">Analyze only</button><button class="secondary" data-job="collections">Curate only</button></div>
+</section>
+
+<section class="status-layout">
+  <div class="panel">
+    <h2>Analysis queue</h2>
+    <div class="status-counts">
+      {% for status, count in status_counts.items() %}<div><span class="status-dot {{ status }}"></span><strong>{{ "{:,}".format(count) }}</strong><small>{{ status|replace('_', ' ') }}</small></div>{% endfor %}
+      {% if not status_counts %}<p>No photos indexed yet.</p>{% endif %}
+    </div>
+    <dl class="config-list">
+      <div><dt>Source</dt><dd>{{ source_summary }}</dd></div>
+      <div><dt>Mode</dt><dd>{{ settings.source_mode|upper }} · read-only application interface</dd></div>
+      <div><dt>Database</dt><dd>{{ settings.database_url|replace('/data/', '/data/') }}</dd></div>
+      <div><dt>Automatic scan</dt><dd>{% if settings.auto_start %}Every {{ settings.scan_interval_hours }} hours{% else %}Disabled{% endif %}</dd></div>
+      <div><dt>File limit</dt><dd>{{ settings.max_file_mb }} MB per image</dd></div>
+      <div><dt>Face analysis</dt><dd>{{ 'Enabled' if settings.face_analysis else 'Disabled' }}</dd></div>
+    </dl>
+  </div>
+
+  <div class="panel job-history">
+    <h2>Job history</h2>
+    {% if jobs %}
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>Kind</th><th>Status</th><th>Progress</th><th>Started</th><th></th></tr></thead><tbody>
+      {% for job in jobs %}<tr>
+        <td>#{{ job.id }}</td><td>{{ job.kind }}</td><td><span class="status-label {{ job.status }}">{{ job.status }}</span><small>{{ job.phase }}</small></td>
+        <td><strong>{{ job.progress_current }}{% if job.progress_total %} / {{ job.progress_total }}{% endif %}</strong><small>{{ job.message }}</small>{% if job.error %}<em title="{{ job.error }}">{{ job.error|truncate(100) }}</em>{% endif %}</td>
+        <td>{{ job.started_at|datetime }}</td>
+        <td>{% if job.status in ['queued', 'running'] %}<button class="text-button danger" data-cancel-job="{{ job.id }}">Cancel</button>{% endif %}</td>
+      </tr>{% endfor %}
+    </tbody></table></div>
+    {% else %}<p>No jobs yet.</p>{% endif %}
+  </div>
+</section>
+
+{% if errors %}
+<section class="panel error-list">
+  <h2>Recent files needing attention</h2>
+  {% for photo in errors %}<div><span class="status-label {{ photo.analysis_status }}">{{ photo.analysis_status }}</span><code>{{ photo.relative_path }}</code><span title="{{ photo.analysis_error }}">{{ photo.analysis_error|truncate(150) }}</span></div>{% endfor %}
+</section>
+{% endif %}
+{% endblock %}
