@@ -137,6 +137,8 @@ select:focus, input:focus { border-color: #7c9a88; box-shadow: 0 0 0 3px rgb(36 
 .collection-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 50px; padding: 4px 0 30px; }
 .collection-header > div:first-child { max-width: 850px; }
 .collection-header h1 { margin: 5px 0 11px; font-size: clamp(42px, 5vw, 68px); }
+.collection-title-line { display: flex; align-items: baseline; gap: 14px; }
+.collection-title-line .text-button { flex: 0 0 auto; color: var(--green); text-decoration: underline; text-underline-offset: 3px; }
 .collection-header p:not(.eyebrow) { color: var(--muted); }
 .back-link { display: inline-block; margin-bottom: 25px; color: var(--green); font-size: 12px; font-weight: 700; }
 .detail-meta { display: flex; flex-wrap: wrap; gap: 17px; color: var(--muted); font-size: 11px; }

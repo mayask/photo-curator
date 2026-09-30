@@ -28,13 +28,15 @@ class SourceError(RuntimeError):
     pass
 
 
+class SourceSizeLimitError(SourceError):
+    pass
+
+
 def _safe_relative_path(relative_path: str) -> str:
-    normalized = str(PurePosixPath(relative_path.replace("\\", "/"))).lstrip("/")
-    if normalized == ".":
-        return ""
-    if normalized == ".." or normalized.startswith("../"):
+    candidate = PurePosixPath(relative_path.replace("\\", "/"))
+    if candidate.is_absolute() or ".." in candidate.parts:
         raise ValueError("Path traversal outside the configured photo root is not allowed")
-    return normalized
+    return "/".join(part for part in candidate.parts if part not in ("", "."))
 
 
 class PhotoSource(ABC):
@@ -77,7 +79,7 @@ class PhotoSource(ABC):
                 while chunk := source.read(1024 * 1024):
                     total += len(chunk)
                     if total > max_bytes:
-                        raise SourceError(
+                        raise SourceSizeLimitError(
                             f"File exceeds MAX_FILE_MB safety limit ({max_bytes} bytes)"
                         )
                     digest.update(chunk)
@@ -109,24 +111,28 @@ class LocalPhotoSource(PhotoSource):
                 continue
             entries.sort(key=lambda item: item.name.casefold(), reverse=True)
             for entry in entries:
-                if entry.is_symlink():
-                    continue
-                if entry.is_dir(follow_symlinks=False):
-                    if entry.name.casefold() not in skipped:
-                        stack.append(Path(entry.path))
-                    continue
-                if not entry.is_file(follow_symlinks=False):
-                    continue
-                extension = Path(entry.name).suffix.lower()
-                if extension not in self.settings.extension_set:
-                    continue
-                stat = entry.stat(follow_symlinks=False)
-                path = Path(entry.path).resolve()
                 try:
-                    relative = path.relative_to(self.root).as_posix()
-                except ValueError:
-                    continue
-                yield SourceEntry(relative, entry.name, stat.st_size, stat.st_mtime)
+                    if entry.is_symlink():
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        if entry.name.casefold() not in skipped:
+                            stack.append(Path(entry.path))
+                        continue
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
+                    extension = Path(entry.name).suffix.lower()
+                    if extension not in self.settings.extension_set:
+                        continue
+                    stat = entry.stat(follow_symlinks=False)
+                    path = Path(entry.path).resolve()
+                    try:
+                        relative = path.relative_to(self.root).as_posix()
+                    except ValueError:
+                        continue
+                    yield SourceEntry(relative, entry.name, stat.st_size, stat.st_mtime)
+                except OSError as exc:
+                    self.walk_warnings += 1
+                    logger.warning("Skipping local entry %s: %s", entry.path, exc)
 
     @contextmanager
     def open_binary(self, relative_path: str) -> Generator[BinaryIO, None, None]:
@@ -185,6 +191,8 @@ class SMBPhotoSource(PhotoSource):
         for attempt in range(1, attempts + 1):
             try:
                 return operation()
+            except SourceSizeLimitError:
+                raise
             except Exception as exc:  # SMB library exposes several transport errors
                 last_error = exc
                 if attempt == attempts:
@@ -212,7 +220,8 @@ class SMBPhotoSource(PhotoSource):
             relative_directory, remote_directory = stack.pop()
 
             def scan(path: str = remote_directory) -> list[Any]:
-                return list(self.smbclient.scandir(path))
+                with self.smbclient.scandir(path) as iterator:
+                    return list(iterator)
 
             try:
                 entries = self._retry(scan, f"listing {relative_directory or '/'}")
@@ -261,8 +270,29 @@ class SMBPhotoSource(PhotoSource):
         finally:
             handle.close()
 
+    def copy_to_local_and_hash(
+        self,
+        relative_path: str,
+        destination: Path,
+        max_bytes: int,
+        progress: Callable[[int], None] | None = None,
+    ) -> tuple[str, int]:
+        def copy_once() -> tuple[str, int]:
+            return super(SMBPhotoSource, self).copy_to_local_and_hash(
+                relative_path,
+                destination,
+                max_bytes,
+                progress,
+            )
+
+        return self._retry(copy_once, f"reading {relative_path}", attempts=3)
+
     def test_connection(self) -> str:
-        self._retry(lambda: list(self.smbclient.scandir(self.root)), "connection test", attempts=2)
+        def probe() -> None:
+            with self.smbclient.scandir(self.root) as iterator:
+                next(iterator, None)
+
+        self._retry(probe, "connection test", attempts=2)
         return "SMB share and configured path are readable"
 
 

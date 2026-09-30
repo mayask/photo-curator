@@ -21,7 +21,7 @@
     </select>
   </label>
   {% if selected_kind or selected_status %}<a href="/collections" class="clear-filter">Clear filters</a>{% endif %}
-  <span class="result-count">{{ collections|length }} collections</span>
+  <span class="result-count">{{ "{:,}".format(total) }} collections</span>
 </form>
 
 {% if collections %}
@@ -30,5 +30,14 @@
 </div>
 {% else %}
 <div class="empty-state"><h3>No matching collections</h3><p>Try another filter, or run curation after more photos finish analysis.</p></div>
+{% endif %}
+
+{% if pages > 1 %}
+<nav class="pagination">
+  {% set suffix %}{% if selected_kind %}&kind={{ selected_kind|urlencode }}{% endif %}{% if selected_status %}&status={{ selected_status|urlencode }}{% endif %}{% endset %}
+  {% if page > 1 %}<a href="?page={{ page - 1 }}{{ suffix }}">← Previous</a>{% endif %}
+  <span>Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a href="?page={{ page + 1 }}{{ suffix }}">Next →</a>{% endif %}
+</nav>
 {% endif %}
 {% endblock %}

@@ -80,7 +80,7 @@ class Photo(Base):
     color_score: Mapped[float | None] = mapped_column(Float)
     resolution_score: Mapped[float | None] = mapped_column(Float)
     quality_score: Mapped[float | None] = mapped_column(Float, index=True)
-    face_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    face_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
     manual_rating: Mapped[int | None] = mapped_column(Integer)
 
     thumb_path: Mapped[str | None] = mapped_column(Text)

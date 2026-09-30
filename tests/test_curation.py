@@ -5,6 +5,9 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 
 from app.curation import (
+    _duplicate_specs,
+    _folder_specs,
+    _together_specs,
     generate_collection_specs,
     persist_collection_specs,
     split_bursts,
@@ -50,6 +53,54 @@ def test_time_event_and_burst_segmentation(settings):
     assert [len(group) for group in bursts] == [5]
 
 
+def test_near_duplicates_are_found_across_distant_dates():
+    first = _photo(1, datetime(2018, 1, 1), 0.6)
+    second = _photo(2, datetime(2025, 6, 1), 0.8)
+    first.id = 1
+    second.id = 2
+    first.perceptual_hash = "1234567890abcdef"
+    second.perceptual_hash = "1234567890abcdee"
+    first.file_hash = "different-a"
+    second.file_hash = "different-b"
+
+    specs = _duplicate_specs([first, second])
+    near = next(spec for spec in specs if spec.key == "duplicates:near")
+
+    assert {link.photo.relative_path for link in near.links} == {
+        first.relative_path,
+        second.relative_path,
+    }
+    assert "library-wide" in near.description
+
+
+def test_source_folders_are_used_as_human_album_clues():
+    photos = [_photo(index, datetime(2020, 6, index + 1)) for index in range(5)]
+    for index, photo in enumerate(photos, 1):
+        photo.id = index
+        photo.relative_path = f"summer-trip/photo-{index}.jpg"
+
+    specs = _folder_specs(photos)
+
+    assert len(specs) == 1
+    assert specs[0].title == "Summer Trip"
+    assert specs[0].key.startswith("folder:")
+
+
+def test_faces_seen_together_create_relationship_collection():
+    photos = [_photo(index, datetime(2024, 2, index + 1), 0.7) for index in range(3)]
+    for index, photo in enumerate(photos, 1):
+        photo.id = index
+    specs = _together_specs(
+        {photo.id: photo for photo in photos},
+        {11: [1, 2, 3], 22: [1, 2, 3]},
+    )
+
+    assert len(specs) == 1
+    assert specs[0].key == "together:11:22"
+    assert specs[0].kind == "visitor"
+    assert len(specs[0].links) == 3
+
+
 def test_collection_generation_and_decisions_survive_rebuild(settings):
     init_database(settings.database_url)
     start = datetime(2024, 5, 3, 9, 0)
@@ -82,9 +133,15 @@ def test_collection_generation_and_decisions_survive_rebuild(settings):
         assert first_link is not None
         first_link.decision = "keep"
         kept_photo_id = first_link.photo_id
+        collection.title = "Our hand-picked favorites"
+        collection.automatic = False
 
     with session_scope() as session:
         specs = generate_collection_specs(session, settings)
+        highlights = next(spec for spec in specs if spec.key == "highlights:all")
+        highlights.links = [
+            link for link in highlights.links if link.photo.id != kept_photo_id
+        ]
         persist_collection_specs(session, specs, settings)
 
     with session_scope() as session:
@@ -97,3 +154,4 @@ def test_collection_generation_and_decisions_survive_rebuild(settings):
         )
         assert preserved is not None
         assert preserved.decision == "keep"
+        assert collection.title == "Our hand-picked favorites"

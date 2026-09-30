@@ -4,15 +4,53 @@ services:
       context: .
       dockerfile: Dockerfile
     image: photo-book-curator:local
-    container_name: photo-book-curator
     restart: unless-stopped
     stop_grace_period: 30s
-    env_file:
-      - .env
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     environment:
       DATA_DIR: /data
       DATABASE_URL: sqlite:////data/photo-curator.db
-      APP_PORT: 8000
+      APP_PORT: "8000"
+      APP_NAME: "${APP_NAME:-Photo Book Curator}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      SOURCE_MODE: "${SOURCE_MODE:-smb}"
+      PHOTO_ROOT: "${PHOTO_ROOT:-/photos}"
+      SMB_HOST: "${SMB_HOST:-}"
+      SMB_SHARE: "${SMB_SHARE:-}"
+      SMB_PATH: "${SMB_PATH:-}"
+      SMB_USER: "${SMB_USER:-}"
+      SMB_PASSWORD: "${SMB_PASSWORD:-}"
+      SMB_DOMAIN: "${SMB_DOMAIN:-}"
+      SMB_PORT: "${SMB_PORT:-445}"
+      SMB_CONNECTION_TIMEOUT: "${SMB_CONNECTION_TIMEOUT:-30}"
+      AUTO_START: "${AUTO_START:-true}"
+      SCAN_INTERVAL_HOURS: "${SCAN_INTERVAL_HOURS:-24}"
+      WORKER_BATCH_SIZE: "${WORKER_BATCH_SIZE:-25}"
+      WORKER_POLL_SECONDS: "${WORKER_POLL_SECONDS:-2}"
+      MAX_ANALYSIS_ATTEMPTS: "${MAX_ANALYSIS_ATTEMPTS:-3}"
+      MAX_FILE_MB: "${MAX_FILE_MB:-250}"
+      MAX_IMAGE_MEGAPIXELS: "${MAX_IMAGE_MEGAPIXELS:-100}"
+      THUMB_SIZE: "${THUMB_SIZE:-360}"
+      PREVIEW_SIZE: "${PREVIEW_SIZE:-1600}"
+      JPEG_QUALITY: "${JPEG_QUALITY:-84}"
+      FACE_ANALYSIS: "${FACE_ANALYSIS:-true}"
+      FACE_DETECTOR_MODEL: "${FACE_DETECTOR_MODEL:-/app/models/face_detection_yunet_2023mar.onnx}"
+      FACE_RECOGNIZER_MODEL: "${FACE_RECOGNIZER_MODEL:-/app/models/face_recognition_sface_2021dec.onnx}"
+      HOLIDAY_COUNTRY: "${HOLIDAY_COUNTRY:-}"
+      HOLIDAY_SUBDIV: "${HOLIDAY_SUBDIV:-}"
+      EVENT_GAP_HOURS: "${EVENT_GAP_HOURS:-8}"
+      BURST_GAP_SECONDS: "${BURST_GAP_SECONDS:-45}"
+      GPS_CLUSTER_KM: "${GPS_CLUSTER_KM:-25}"
+      SKIP_DIRECTORIES: "${SKIP_DIRECTORIES:-@eaDir,#recycle,.snapshot,.thumbnails}"
+      SUPPORTED_EXTENSIONS: "${SUPPORTED_EXTENSIONS:-.jpg,.jpeg,.jpe,.png,.webp,.heic,.heif,.tif,.tiff,.bmp,.gif}"
+      ANALYSIS_VERSION: "${ANALYSIS_VERSION:-1}"
+      COLLECTION_VERSION: "${COLLECTION_VERSION:-1}"
     ports:
       - "${WEB_PORT:-8787}:8000"
     volumes:

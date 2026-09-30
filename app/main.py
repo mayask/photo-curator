@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
-from sqlalchemy import case, desc, func, or_, select
+from sqlalchemy import case, desc, func, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app import __version__
@@ -65,6 +65,11 @@ def _format_bytes(value: int | None) -> str:
     return f"{size:.1f} TB"
 
 
+def _safe_csv_text(value: str) -> str:
+    """Prevent spreadsheet formula execution from paths or user-entered notes."""
+    return f"'{value}" if value.startswith(("=", "+", "-", "@", "\t", "\r")) else value
+
+
 def create_app(settings: Settings | None = None, start_worker: bool = True) -> FastAPI:
     settings = settings or get_settings()
     settings.ensure_directories()
@@ -90,6 +95,10 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
     application.state.worker = worker
 
     templates = Jinja2Templates(directory=BASE_DIR / "templates")
+    asset_version = max(
+        int((BASE_DIR / "static" / name).stat().st_mtime)
+        for name in ("app.css", "app.js")
+    )
     templates.env.filters["datetime"] = _format_datetime
     templates.env.filters["filesize"] = _format_bytes
     application.mount(
@@ -104,6 +113,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
             "request": request,
             "app_name": settings.app_name,
             "version": __version__,
+            "asset_version": asset_version,
             "source_summary": settings.source_summary(),
         }
         base_context.update(context)
@@ -134,9 +144,15 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
             .select_from(Photo)
             .where(Photo.active.is_(True), Photo.analysis_status == "done")
         ) or 0
-        face_count = db.scalar(select(func.count()).select_from(Photo).where(Photo.face_count > 0)) or 0
+        face_count = db.scalar(
+            select(func.count())
+            .select_from(Photo)
+            .where(Photo.active.is_(True), Photo.face_count > 0)
+        ) or 0
         located_count = db.scalar(
-            select(func.count()).select_from(Photo).where(Photo.latitude.is_not(None))
+            select(func.count())
+            .select_from(Photo)
+            .where(Photo.active.is_(True), Photo.latitude.is_not(None))
         ) or 0
         collection_count = db.scalar(select(func.count()).select_from(Collection)) or 0
         keep_count = db.scalar(
@@ -179,17 +195,30 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
         db: DbSession,
         kind: str | None = None,
         status: str | None = None,
+        page: Annotated[int, Query(ge=1)] = 1,
+        per_page: Annotated[int, Query(ge=20, le=120)] = 60,
     ):
-        query = select(Collection).options(selectinload(Collection.cover_photo))
+        conditions = []
         if kind:
-            query = query.where(Collection.kind == kind)
+            conditions.append(Collection.kind == kind)
         if status:
-            query = query.where(Collection.status == status)
+            conditions.append(Collection.status == status)
         else:
-            query = query.where(Collection.status != "hidden")
+            conditions.append(Collection.status != "hidden")
+        total = db.scalar(
+            select(func.count()).select_from(Collection).where(*conditions)
+        ) or 0
         collections = list(
-            db.scalars(query.order_by(desc(Collection.score), desc(Collection.updated_at)))
+            db.scalars(
+                select(Collection)
+                .options(selectinload(Collection.cover_photo))
+                .where(*conditions)
+                .order_by(desc(Collection.score), desc(Collection.updated_at))
+                .offset((page - 1) * per_page)
+                .limit(per_page)
+            )
         )
+        collection_ids = [collection.id for collection in collections]
         counts = {
             row.collection_id: (row.total, row.kept, row.rejected)
             for row in db.execute(
@@ -198,7 +227,9 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
                     func.count(CollectionPhoto.id).label("total"),
                     func.sum(case((CollectionPhoto.decision == "keep", 1), else_=0)).label("kept"),
                     func.sum(case((CollectionPhoto.decision == "reject", 1), else_=0)).label("rejected"),
-                ).group_by(CollectionPhoto.collection_id)
+                )
+                .where(CollectionPhoto.collection_id.in_(collection_ids))
+                .group_by(CollectionPhoto.collection_id)
             )
         }
         kinds = list(db.scalars(select(Collection.kind).distinct().order_by(Collection.kind)))
@@ -210,6 +241,9 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
             kinds=kinds,
             selected_kind=kind,
             selected_status=status,
+            page=page,
+            pages=max(1, (total + per_page - 1) // per_page),
+            total=total,
         )
 
     @application.get("/collections/{collection_id}", response_class=HTMLResponse)
@@ -218,8 +252,10 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
         request: Request,
         db: DbSession,
         page: Annotated[int, Query(ge=1)] = 1,
-        decision: str | None = None,
-        per_page: int = 80,
+        decision: Annotated[
+            str | None, Query(pattern="^(pending|keep|reject)$")
+        ] = None,
+        per_page: Annotated[int, Query(ge=20, le=200)] = 80,
     ):
         collection = db.get(Collection, collection_id)
         if not collection:
@@ -270,15 +306,20 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
         request: Request,
         db: DbSession,
         page: Annotated[int, Query(ge=1)] = 1,
-        year: int | None = None,
+        year: Annotated[int | None, Query(ge=1900, le=9998)] = None,
         faces: bool | None = None,
         located: bool | None = None,
-        q: str | None = None,
-        per_page: int = 80,
+        q: Annotated[str | None, Query(max_length=200)] = None,
+        per_page: Annotated[int, Query(ge=20, le=200)] = 80,
     ):
         conditions = [Photo.active.is_(True)]
         if year:
-            conditions.append(func.strftime("%Y", Photo.capture_at) == str(year))
+            conditions.extend(
+                (
+                    Photo.capture_at >= datetime(year, 1, 1),
+                    Photo.capture_at < datetime(year + 1, 1, 1),
+                )
+            )
         if faces is True:
             conditions.append(Photo.face_count > 0)
         if faces is False:
@@ -311,7 +352,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
             int(value)
             for value in db.scalars(
                 select(func.strftime("%Y", Photo.capture_at))
-                .where(Photo.capture_at.is_not(None))
+                .where(Photo.active.is_(True), Photo.capture_at.is_not(None))
                 .distinct()
                 .order_by(desc(func.strftime("%Y", Photo.capture_at)))
             )
@@ -355,7 +396,10 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
         errors = list(
             db.scalars(
                 select(Photo)
-                .where(Photo.analysis_status.in_(("error", "unsupported", "too_large")))
+                .where(
+                    Photo.active.is_(True),
+                    Photo.analysis_status.in_(("error", "unsupported", "too_large")),
+                )
                 .order_by(desc(Photo.updated_at))
                 .limit(30)
             )
@@ -403,6 +447,22 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
             raise HTTPException(409, "Job is not active")
         return {"ok": True}
 
+    @application.post("/api/retry-errors")
+    def retry_analysis_errors(request: Request, db: DbSession):
+        result = db.execute(
+            update(Photo)
+            .where(Photo.active.is_(True), Photo.analysis_status == "error")
+            .values(
+                analysis_status="pending",
+                analysis_attempts=0,
+                analysis_error=None,
+            )
+        )
+        # Make the reset visible before waking the worker's separate DB session.
+        db.commit()
+        job_id = request.app.state.worker.enqueue("analyze")
+        return {"ok": True, "reset": result.rowcount or 0, "job_id": job_id}
+
     @application.patch("/api/collection-links/{link_id}")
     def update_decision(link_id: int, body: DecisionBody, db: DbSession):
         link = db.get(CollectionPhoto, link_id)
@@ -419,7 +479,11 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
         if not collection:
             raise HTTPException(404, "Collection not found")
         if body.title is not None:
-            collection.title = body.title.strip()
+            title = body.title.strip()
+            if not title:
+                raise HTTPException(422, "Collection title cannot be blank")
+            collection.title = title
+            collection.automatic = False
         if body.status is not None:
             collection.status = body.status
         return {"ok": True, "title": collection.title, "status": collection.status}
@@ -495,12 +559,16 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
                 [
                     link.rank,
                     link.decision,
-                    photo.relative_path,
+                    _safe_csv_text(photo.relative_path),
                     photo.capture_at.isoformat() if photo.capture_at else "",
                     f"{photo.quality_score:.4f}" if photo.quality_score is not None else "",
-                    ", ".join(value for value in (photo.place_city, photo.place_country) if value),
-                    link.reason,
-                    link.note,
+                    _safe_csv_text(
+                        ", ".join(
+                            value for value in (photo.place_city, photo.place_country) if value
+                        )
+                    ),
+                    _safe_csv_text(link.reason),
+                    _safe_csv_text(link.note),
                 ]
             )
         safe_name = "".join(character if character.isalnum() else "-" for character in collection.title).strip("-")[:80]

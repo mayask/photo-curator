@@ -47,6 +47,12 @@ def init_database(database_url: str) -> Engine:
             autoflush=False,
         )
         Base.metadata.create_all(_engine)
+        # create_all does not add a newly introduced index to an existing table.
+        # Explicit check-first creation keeps lightweight upgrades safe without
+        # requiring a separate migration service for index-only changes.
+        for table in Base.metadata.sorted_tables:
+            for index in table.indexes:
+                index.create(_engine, checkfirst=True)
         return _engine
 
 

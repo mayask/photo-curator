@@ -36,6 +36,7 @@ def test_local_source_walk_is_filtered_and_read_only(settings, tmp_path: Path):
 
 def test_local_source_rejects_path_traversal(settings):
     source = LocalPhotoSource(settings)
-    with pytest.raises(ValueError, match="traversal"):
-        with source.open_binary("../secret.jpg"):
-            pass
+    for unsafe_path in ("../secret.jpg", "trip/../../secret.jpg", "/etc/passwd"):
+        with pytest.raises(ValueError, match="traversal"):
+            with source.open_binary(unsafe_path):
+                pass

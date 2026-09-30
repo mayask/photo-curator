@@ -7,11 +7,13 @@ from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
+from itertools import combinations
+from pathlib import PurePosixPath
 
 import numpy as np
-from sklearn.cluster import DBSCAN
-from sqlalchemy import delete, select
-from sqlalchemy.orm import Session
+from sklearn.cluster import DBSCAN, Birch
+from sqlalchemy import select
+from sqlalchemy.orm import Session, defer, selectinload
 
 from app.config import Settings
 from app.models import Collection, CollectionPhoto, Face, Photo
@@ -273,13 +275,19 @@ def _diverse_highlights(photos: Sequence[Photo], limit: int) -> list[Photo]:
 def _cluster_faces(session: Session) -> dict[int, list[int]]:
     faces = list(
         session.scalars(
-            select(Face).where(Face.embedding.is_not(None)).order_by(Face.id)
+            select(Face)
+            .join(Face.photo)
+            .where(
+                Face.embedding.is_not(None),
+                Photo.active.is_(True),
+                Photo.analysis_status == "done",
+            )
+            .order_by(Face.id)
         )
     )
-    session.execute(delete(Face).where(False))  # force a predictable autoflush boundary
+    for face in faces:
+        face.cluster_id = None
     if len(faces) < 3:
-        for face in faces:
-            face.cluster_id = None
         return {}
 
     valid_faces: list[Face] = []
@@ -301,18 +309,33 @@ def _cluster_faces(session: Session) -> dict[int, list[int]]:
 
     if len(vectors) < 3:
         return {}
-    labels = DBSCAN(eps=0.38, min_samples=3, metric="cosine", n_jobs=-1).fit_predict(
-        np.vstack(vectors)
-    )
+    matrix = np.vstack(vectors)
+    if len(vectors) <= 5_000:
+        labels = DBSCAN(
+            eps=0.38,
+            min_samples=3,
+            metric="cosine",
+            n_jobs=-1,
+        ).fit_predict(matrix)
+    else:
+        # Pairwise DBSCAN becomes prohibitively expensive on very large face
+        # libraries. BIRCH keeps bounded summaries and scales near-linearly.
+        logger.info("Using scalable BIRCH face clustering for %s faces", len(vectors))
+        labels = Birch(
+            threshold=0.5,
+            branching_factor=75,
+            n_clusters=None,
+        ).fit_predict(matrix)
+
     members: dict[int, list[Face]] = defaultdict(list)
     for face, label in zip(valid_faces, labels, strict=True):
-        if label < 0:
-            face.cluster_id = None
-        else:
+        if label >= 0:
             members[int(label)].append(face)
 
     result: dict[int, list[int]] = {}
     for cluster_faces in members.values():
+        if len(cluster_faces) < 3:
+            continue
         stable_id = min(face.id for face in cluster_faces)
         for face in cluster_faces:
             face.cluster_id = stable_id
@@ -324,7 +347,12 @@ def _event_specs(photos: Sequence[Photo], settings: Settings) -> list[Collection
     specs: list[CollectionSpec] = []
     events = split_events(photos, settings)
     qualifying = [event for event in events if len(event) >= 4]
-    for event in qualifying:
+    event_candidates = sorted(
+        qualifying,
+        key=lambda event: (len(event), max(photo_quality(photo) for photo in event)),
+        reverse=True,
+    )[:250]
+    for event in event_candidates:
         start = event[0].capture_at
         end = event[-1].capture_at
         if not start or not end:
@@ -420,26 +448,38 @@ def _duplicate_specs(photos: Sequence[Photo]) -> list[CollectionSpec]:
             )
         )
 
-    candidates = sorted(
-        (photo for photo in photos if photo.capture_at and photo.perceptual_hash),
-        key=lambda photo: (photo.capture_at, photo.id),
-    )
+    candidates = [photo for photo in photos if photo.perceptual_hash]
     union = UnionFind(photo.id for photo in candidates)
-    left = 0
-    exact_pairs = {photo.id: photo.file_hash for photo in candidates}
-    for right, photo in enumerate(candidates):
-        assert photo.capture_at
-        while left < right:
-            prior_time = candidates[left].capture_at
-            assert prior_time
-            if (photo.capture_at - prior_time).total_seconds() <= 600:
-                break
-            left += 1
-        for prior in candidates[left:right]:
-            if photo.file_hash and exact_pairs.get(prior.id) == photo.file_hash:
+
+    # Find pHashes within Hamming distance 7 across the whole library—not only
+    # photos taken minutes apart. Splitting 64 bits into four 16-bit chunks and
+    # probing each chunk at distance 0 or 1 is complete by the pigeonhole
+    # principle: a full hash with <=7 changed bits must have such a chunk.
+    buckets: dict[tuple[int, int], dict[int, Photo]] = defaultdict(dict)
+    for photo in candidates:
+        try:
+            value = int(photo.perceptual_hash or "", 16)
+        except ValueError:
+            continue
+        possible: dict[int, Photo] = {}
+        for chunk_index in range(4):
+            chunk = (value >> (chunk_index * 16)) & 0xFFFF
+            neighbors = [chunk, *(chunk ^ (1 << bit) for bit in range(16))]
+            for neighbor in neighbors:
+                for prior in buckets.get((chunk_index, neighbor), {}).values():
+                    possible[prior.id] = prior
+
+        for prior in possible.values():
+            if photo.file_hash and prior.file_hash == photo.file_hash:
                 continue
             if hash_distance(photo.perceptual_hash, prior.perceptual_hash) <= 7:
                 union.union(photo.id, prior.id)
+
+        for chunk_index in range(4):
+            chunk = (value >> (chunk_index * 16)) & 0xFFFF
+            # One photo per distinct pHash is sufficient. Byte-identical copies
+            # are already represented in the exact-duplicate collection.
+            buckets[(chunk_index, chunk)].setdefault(value, photo)
     near_groups: dict[int, list[Photo]] = defaultdict(list)
     for photo in candidates:
         near_groups[union.find(photo.id)].append(photo)
@@ -460,7 +500,7 @@ def _duplicate_specs(photos: Sequence[Photo]) -> list[CollectionSpec]:
                 key="duplicates:near",
                 kind="duplicates",
                 title="Near duplicates",
-                description=f"{len(groups)} groups detected with perceptual hashes within short time windows.",
+                description=f"{len(groups)} visually similar groups detected library-wide with perceptual hashes.",
                 links=links,
                 score=0.95,
                 cover_photo_id=max((link.photo for link in links), key=photo_quality).id,
@@ -521,6 +561,39 @@ def _place_specs(photos: Sequence[Photo], settings: Settings) -> list[Collection
                 f"{len(group)} photos within roughly {settings.gps_cluster_km:g} km, using embedded GPS metadata.",
                 group,
                 "place highlight",
+            )
+        )
+    return specs
+
+
+def _folder_specs(photos: Sequence[Photo]) -> list[CollectionSpec]:
+    groups: dict[str, list[Photo]] = defaultdict(list)
+    for photo in photos:
+        parent = PurePosixPath(photo.relative_path).parent.as_posix()
+        if parent not in {"", "."}:
+            groups[parent].append(photo)
+
+    generic_names = {"camera", "dcim", "images", "photos", "pictures", "uploads"}
+    candidates = [
+        (path, group)
+        for path, group in groups.items()
+        if 5 <= len(group) <= 1_000
+        and PurePosixPath(path).name.casefold() not in generic_names
+    ]
+    specs: list[CollectionSpec] = []
+    for path, group in sorted(candidates, key=lambda item: len(item[1]), reverse=True)[:80]:
+        raw_name = PurePosixPath(path).name
+        title = raw_name.replace("_", " ").replace("-", " ").strip().title()
+        digest = hashlib.sha1(path.encode("utf-8")).hexdigest()[:16]
+        specs.append(
+            _make_spec(
+                f"folder:{digest}",
+                "folder",
+                title or raw_name,
+                f"{len(group)} analyzed photos already grouped in source folder {path}. "
+                "The folder is treated as a useful human-authored album clue.",
+                group,
+                "folder highlight",
             )
         )
     return specs
@@ -621,6 +694,58 @@ def _face_specs(
             )
         )
     return specs[:100]
+
+
+def _together_specs(
+    photos_by_id: dict[int, Photo], cluster_photo_ids: dict[int, list[int]]
+) -> list[CollectionSpec]:
+    people_by_photo: dict[int, set[int]] = defaultdict(set)
+    for cluster_id, photo_ids in cluster_photo_ids.items():
+        for photo_id in set(photo_ids):
+            if photo_id in photos_by_id:
+                people_by_photo[photo_id].add(cluster_id)
+
+    pair_photos: dict[tuple[int, int], list[Photo]] = defaultdict(list)
+    for photo_id, people in people_by_photo.items():
+        # Very large group photos add noisy combinatorics and weak relationship
+        # signals, so co-occurrence is limited to small groups.
+        if not 2 <= len(people) <= 8:
+            continue
+        for pair in combinations(sorted(people), 2):
+            pair_photos[pair].append(photos_by_id[photo_id])
+
+    specs: list[CollectionSpec] = []
+    groups = sorted(pair_photos.items(), key=lambda item: len(item[1]), reverse=True)
+    for (left, right), photos in groups[:40]:
+        if len(photos) < 3:
+            continue
+        dated = sorted((photo for photo in photos if photo.capture_at), key=lambda p: p.capture_at)
+        title = f"People {left} & {right} together"
+        description = (
+            f"Two locally recognized faces appear together in {len(photos)} photos—"
+            "a useful relationship, family, or shared-selfie thread."
+        )
+        kind = "people"
+        if dated:
+            span_days = (dated[-1].capture_at.date() - dated[0].capture_at.date()).days  # type: ignore[union-attr]
+            if span_days <= 14:
+                title = f"Possible visit together — {dated[0].capture_at.strftime('%b %Y')}"  # type: ignore[union-attr]
+                description = (
+                    f"These two faces appear together in {len(photos)} photos over a "
+                    "short period, suggesting a visit or shared occasion."
+                )
+                kind = "visitor"
+        specs.append(
+            _make_spec(
+                f"together:{left}:{right}",
+                kind,
+                title,
+                description,
+                photos,
+                "people together",
+            )
+        )
+    return specs
 
 
 def _highlight_specs(photos: Sequence[Photo]) -> list[CollectionSpec]:
@@ -729,7 +854,9 @@ def generate_collection_specs(
 ) -> list[CollectionSpec]:
     photos = list(
         session.scalars(
-            select(Photo).where(
+            select(Photo)
+            .options(defer(Photo.visual_features))
+            .where(
                 Photo.active.is_(True),
                 Photo.analysis_status == "done",
             )
@@ -748,8 +875,10 @@ def generate_collection_specs(
         ("Finding places", lambda: _place_specs(photos, settings)),
         ("Finding duplicate candidates", lambda: _duplicate_specs(photos)),
         ("Finding bursts and series", lambda: _burst_specs(photos, settings)),
+        ("Using source folders as album clues", lambda: _folder_specs(photos)),
         ("Finding recurring and holiday dates", lambda: _calendar_specs(photos, settings)),
         ("Building people and visitor groups", lambda: _face_specs(session, photos_by_id, face_clusters)),
+        ("Finding people who appear together", lambda: _together_specs(photos_by_id, face_clusters)),
     ]
     specs: dict[str, CollectionSpec] = {}
     for message, builder in builders:
@@ -773,7 +902,7 @@ def persist_collection_specs(
     existing = {
         collection.key: collection
         for collection in session.scalars(
-            select(Collection).where(Collection.automatic.is_(True))
+            select(Collection).options(selectinload(Collection.photos))
         )
     }
     desired_keys = {spec.key for spec in specs}
@@ -785,7 +914,8 @@ def persist_collection_specs(
             session.add(collection)
             session.flush()
         collection.kind = spec.kind
-        collection.title = spec.title
+        if collection.automatic:
+            collection.title = spec.title
         collection.description = spec.description
         collection.score = spec.score
         collection.algorithm_version = settings.collection_version
@@ -797,9 +927,18 @@ def persist_collection_specs(
 
         old_links = {link.photo_id: link for link in collection.photos}
         wanted_ids = {link.photo.id for link in spec.links}
+        retained_rank = len(spec.links) + 1
         for photo_id, old_link in list(old_links.items()):
-            if photo_id not in wanted_ids:
+            if photo_id in wanted_ids:
+                continue
+            if old_link.decision == "pending":
                 session.delete(old_link)
+            else:
+                # Never erase a human review decision just because a later
+                # heuristic version no longer ranks the photo automatically.
+                old_link.rank = retained_rank
+                old_link.reason = "Retained from an earlier suggestion after manual review"
+                retained_rank += 1
         for rank, candidate in enumerate(spec.links, 1):
             link = old_links.get(candidate.photo.id)
             if link is None:
@@ -818,7 +957,15 @@ def persist_collection_specs(
             session.flush()
 
     for key, collection in existing.items():
-        if key not in desired_keys and collection.status == "unreviewed":
+        if key in desired_keys or not collection.automatic:
+            continue
+        has_review_decisions = any(link.decision != "pending" for link in collection.photos)
+        if collection.status == "unreviewed" and not has_review_decisions:
             session.delete(collection)
+        elif "Archived automatic suggestion" not in collection.description:
+            collection.description = (
+                f"{collection.description.rstrip()} Archived automatic suggestion; "
+                "kept because it contains review decisions."
+            ).strip()
     session.flush()
     return total

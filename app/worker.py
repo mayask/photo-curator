@@ -14,14 +14,18 @@ from sqlalchemy import func, or_, select, update
 from app.config import Settings
 from app.curation import generate_collection_specs, persist_collection_specs
 from app.database import session_scope
-from app.image_analysis import ImageAnalyzer, PlaceResolver
+from app.image_analysis import ImageAnalyzer, ImageTooLargeError, PlaceResolver
 from app.models import AppState, Face, Job, Photo, utcnow
-from app.source import PhotoSource, SourceEntry, build_source
+from app.source import PhotoSource, SourceEntry, SourceSizeLimitError, build_source
 
 logger = logging.getLogger(__name__)
 
 
 class JobCancelled(RuntimeError):
+    pass
+
+
+class WorkerStopping(RuntimeError):
     pass
 
 
@@ -44,6 +48,20 @@ class WorkerService:
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
+        self._stop_event.clear()
+        self._wake_event.clear()
+        self._recover_interrupted_work()
+        self._cleanup_stale_temp_files()
+        if self.settings.auto_start:
+            self._ensure_initial_job()
+        self._thread = threading.Thread(
+            target=self._run_loop,
+            name="photo-curator-worker",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _recover_interrupted_work(self) -> None:
         with session_scope() as session:
             interrupted = list(session.scalars(select(Job).where(Job.status == "running")))
             for job in interrupted:
@@ -51,14 +69,25 @@ class WorkerService:
                 job.phase = "queued"
                 job.message = "Resuming after application restart"
                 job.started_at = None
-        self._thread = threading.Thread(
-            target=self._run_loop,
-            name="photo-curator-worker",
-            daemon=True,
-        )
-        self._thread.start()
-        if self.settings.auto_start:
-            self._ensure_initial_job()
+            session.execute(
+                update(Photo)
+                .where(Photo.analysis_status == "analyzing")
+                .values(
+                    analysis_status="error",
+                    analysis_error="Analysis was interrupted; it will be retried",
+                )
+            )
+
+    def _cleanup_stale_temp_files(self) -> None:
+        try:
+            stale_paths = list(self.settings.temp_dir.iterdir())
+            stale_paths.extend(self.settings.thumbs_dir.glob("*/*.tmp"))
+            stale_paths.extend(self.settings.previews_dir.glob("*/*.tmp"))
+            for path in stale_paths:
+                if path.is_file() or path.is_symlink():
+                    path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("Could not clean stale analysis files: %s", exc)
 
     def stop(self, timeout: float = 15) -> None:
         self._stop_event.set()
@@ -71,10 +100,13 @@ class WorkerService:
             raise ValueError(f"Unknown job kind: {kind}")
         with session_scope() as session:
             if not force:
+                active_kinds = ("full",) if kind == "full" else (kind, "full")
                 active = session.scalar(
                     select(Job)
-                    .where(Job.status.in_(("queued", "running")))
-                    .where(or_(Job.kind == kind, Job.kind == "full", kind == "full"))
+                    .where(
+                        Job.status.in_(("queued", "running")),
+                        Job.kind.in_(active_kinds),
+                    )
                     .order_by(Job.created_at)
                 )
                 if active:
@@ -117,6 +149,8 @@ class WorkerService:
                 continue
             try:
                 self._execute_job(job_id)
+            except WorkerStopping:
+                self._requeue_job(job_id, "Paused for application shutdown; will resume")
             except JobCancelled:
                 self._finish_job(job_id, "cancelled", "Cancelled by user")
             except Exception as exc:
@@ -224,7 +258,7 @@ class WorkerService:
         for entry in source.walk():
             self._check_cancelled(job_id)
             batch.append(entry)
-            if len(batch) >= 250:
+            if len(batch) >= max(1, self.settings.worker_batch_size):
                 flush(batch)
                 batch.clear()
         flush(batch)
@@ -283,6 +317,7 @@ class WorkerService:
                 source_mtime = photo.source_mtime
                 if photo.size_bytes > max_bytes:
                     photo.analysis_status = "too_large"
+                    photo.analysis_version = self.settings.analysis_version
                     photo.analysis_error = f"Larger than MAX_FILE_MB={self.settings.max_file_mb}"
                     self._set_job_in_session(
                         session,
@@ -294,6 +329,9 @@ class WorkerService:
                     )
                     continue
                 photo.analysis_status = "analyzing"
+                # Increment before touching the source so a hard crash on one corrupt
+                # or pathological file cannot cause an infinite restart loop.
+                photo.analysis_attempts += 1
 
             cache_key = hashlib.sha1(relative_path.encode("utf-8")).hexdigest()
             thumb_relative = f"thumbs/{cache_key[:2]}/{cache_key}.jpg"
@@ -302,16 +340,40 @@ class WorkerService:
             preview_path = self.settings.cache_dir / preview_relative
             temporary_path = self.settings.temp_dir / f"photo-{photo_id}-{uuid.uuid4().hex}{extension}"
             try:
+                last_transfer_update = 0.0
+
+                def transfer_progress(
+                    bytes_read: int,
+                    *,
+                    item_index: int = index,
+                    item_path: str = relative_path,
+                ) -> None:
+                    nonlocal last_transfer_update
+                    now = time.monotonic()
+                    if now - last_transfer_update < 5:
+                        return
+                    last_transfer_update = now
+                    self._set_progress(
+                        job_id,
+                        "analyzing",
+                        item_index - 1,
+                        total,
+                        f"Reading {item_index:,}/{total:,}: {Path(item_path).name} "
+                        f"({bytes_read / 1_048_576:.1f} MB)",
+                    )
+
                 file_hash, _bytes_read = source.copy_to_local_and_hash(
                     relative_path,
                     temporary_path,
                     max_bytes=max_bytes,
+                    progress=transfer_progress,
                 )
                 result = self._analyzer.analyze(
                     temporary_path,
                     source_mtime,
                     thumbnail_path,
                     preview_path,
+                    source_name=relative_path,
                 )
                 city, region, country = self._place_resolver.resolve(
                     result.latitude, result.longitude
@@ -376,12 +438,15 @@ class WorkerService:
                         total,
                         f"Analyzed {index:,}/{total:,}: {Path(relative_path).name}",
                     )
-            except (UnidentifiedImageError, Image.DecompressionBombError) as exc:
+            except (ImageTooLargeError, Image.DecompressionBombError, SourceSizeLimitError) as exc:
+                logger.warning("Image exceeds a configured safety limit %s: %s", relative_path, exc)
+                self._record_analysis_error(photo_id, str(exc), status="too_large")
+            except UnidentifiedImageError as exc:
                 logger.warning("Unsupported/corrupt image %s: %s", relative_path, exc)
-                self._record_analysis_error(photo_id, str(exc), unsupported=True)
+                self._record_analysis_error(photo_id, str(exc), status="unsupported")
             except Exception as exc:
                 logger.exception("Analysis failed for %s", relative_path)
-                self._record_analysis_error(photo_id, str(exc), unsupported=False)
+                self._record_analysis_error(photo_id, str(exc), status="error")
             finally:
                 temporary_path.unlink(missing_ok=True)
 
@@ -394,13 +459,14 @@ class WorkerService:
                     f"Analyzed {index:,}/{total:,} photos",
                 )
 
-    def _record_analysis_error(self, photo_id: int, error: str, unsupported: bool) -> None:
+    def _record_analysis_error(self, photo_id: int, error: str, status: str) -> None:
         with session_scope() as session:
             photo = session.get(Photo, photo_id)
             if not photo:
                 return
-            photo.analysis_attempts += 1
-            photo.analysis_status = "unsupported" if unsupported else "error"
+            photo.analysis_status = status
+            if status in {"unsupported", "too_large"}:
+                photo.analysis_version = self.settings.analysis_version
             photo.analysis_error = error[:2000]
 
     def _build_collections(self, job_id: int) -> None:
@@ -438,7 +504,7 @@ class WorkerService:
 
     def _check_cancelled(self, job_id: int) -> None:
         if self._stop_event.is_set():
-            raise JobCancelled("Application is stopping")
+            raise WorkerStopping("Application is stopping")
         with session_scope() as session:
             requested = session.scalar(select(Job.cancel_requested).where(Job.id == job_id))
         if requested:
@@ -472,6 +538,18 @@ class WorkerService:
         else:
             state.value = value
 
+    def _requeue_job(self, job_id: int, message: str) -> None:
+        with session_scope() as session:
+            job = session.get(Job, job_id)
+            if not job:
+                return
+            job.status = "queued"
+            job.phase = "queued"
+            job.message = message
+            job.error = None
+            job.started_at = None
+            job.heartbeat_at = utcnow()
+
     def _finish_job(
         self, job_id: int, status: str, message: str, error: str | None = None
     ) -> None:
@@ -494,17 +572,30 @@ class WorkerService:
                 select(func.count()).select_from(Job).where(Job.status.in_(("queued", "running")))
             )
             state = session.get(AppState, "last_scan_at")
+            latest_attempt = session.scalar(
+                select(func.max(Job.created_at)).where(Job.kind.in_(("full", "scan")))
+            )
         if active:
             return
         due = True
+        reference_times: list[datetime] = []
         if state:
             try:
-                last_scan = datetime.fromisoformat(state.value)
-                due = datetime.now(UTC) - last_scan >= timedelta(
-                    hours=self.settings.scan_interval_hours
-                )
+                reference_times.append(datetime.fromisoformat(state.value))
             except ValueError:
                 pass
+        if latest_attempt is not None:
+            reference_times.append(latest_attempt)
+        # Use the latest success or attempt. Otherwise a currently unreachable
+        # source with an older successful scan would trigger a tight failure loop.
+        normalized = [
+            value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+            for value in reference_times
+        ]
+        if normalized:
+            due = datetime.now(UTC) - max(normalized) >= timedelta(
+                hours=self.settings.scan_interval_hours
+            )
         if due:
             self.enqueue("full")
             time.sleep(1)

@@ -55,6 +55,21 @@
     });
   });
 
+  const retryErrors = $("#retry-errors");
+  if (retryErrors) {
+    retryErrors.addEventListener("click", async () => {
+      retryErrors.disabled = true;
+      try {
+        const result = await request("/api/retry-errors", { method: "POST" });
+        toast(`${result.reset} files reset; job #${result.job_id} queued`);
+        pollStatus();
+      } catch (error) {
+        toast(error.message, true);
+        retryErrors.disabled = false;
+      }
+    });
+  }
+
   $$('[data-cancel-job]').forEach((button) => {
     button.addEventListener("click", async () => {
       if (!confirm("Stop this job after the current file?")) return;
@@ -85,7 +100,8 @@
   setInterval(pollStatus, 4000);
 
   let activeCard = null;
-  $$(".review-card").forEach((card) => {
+  const reviewCards = $$(".review-card");
+  reviewCards.forEach((card) => {
     card.addEventListener("focus", () => selectCard(card));
     card.addEventListener("click", (event) => {
       if (event.target.closest("a")) return;
@@ -107,14 +123,26 @@
     activeCard.classList.add("selected-card");
   }
 
+  function adjustDecisionCount(decision, amount) {
+    $$(`[data-decision-count="${decision}"]`).forEach((counter) => {
+      counter.textContent = String(Math.max(0, Number(counter.textContent) + amount));
+    });
+  }
+
   async function setDecision(card, decision) {
     const linkId = card.dataset.linkId;
+    const previous = card.dataset.currentDecision;
     try {
       await request(`/api/collection-links/${linkId}`, {
         method: "PATCH", body: JSON.stringify({ decision }),
       });
       card.classList.remove("decision-keep", "decision-reject", "decision-pending");
       card.classList.add(`decision-${decision}`);
+      card.dataset.currentDecision = decision;
+      if (previous && previous !== decision) {
+        adjustDecisionCount(previous, -1);
+        adjustDecisionCount(decision, 1);
+      }
       $$('[data-decision]', card).forEach((button) => {
         button.classList.toggle("selected", button.dataset.decision === decision);
       });
@@ -124,12 +152,40 @@
   document.addEventListener("keydown", (event) => {
     if (!activeCard || event.metaKey || event.ctrlKey || event.altKey) return;
     if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) return;
+    if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
+      event.preventDefault();
+      const current = reviewCards.indexOf(activeCard);
+      const offset = event.key === "ArrowRight" ? 1 : -1;
+      const next = reviewCards[Math.max(0, Math.min(reviewCards.length - 1, current + offset))];
+      if (next) {
+        next.focus({ preventScroll: true });
+        next.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+      }
+      return;
+    }
     const decision = { k: "keep", r: "reject", u: "pending" }[event.key.toLowerCase()];
     if (decision) {
       event.preventDefault();
       setDecision(activeCard, decision);
     }
   });
+
+  const renameCollection = $("#rename-collection");
+  if (renameCollection) {
+    renameCollection.addEventListener("click", async () => {
+      const titleElement = $("#collection-title");
+      const title = prompt("Collection title", titleElement.textContent.trim());
+      if (title == null || !title.trim()) return;
+      try {
+        const result = await request(`/api/collections/${renameCollection.dataset.collectionId}`, {
+          method: "PATCH", body: JSON.stringify({ title: title.trim() }),
+        });
+        titleElement.textContent = result.title;
+        document.title = `${result.title} · Photo Book Curator`;
+        toast("Collection renamed");
+      } catch (error) { toast(error.message, true); }
+    });
+  }
 
   const collectionStatus = $("#collection-status");
   if (collectionStatus) {
@@ -147,15 +203,18 @@
   if (rating) {
     $$('[data-rating]', rating).forEach((button) => {
       button.addEventListener("click", async () => {
-        const value = Number(button.dataset.rating);
+        const clicked = Number(button.dataset.rating);
+        const current = Number(rating.dataset.currentRating || 0);
+        const value = clicked === current ? null : clicked;
         try {
           await request(`/api/photos/${rating.dataset.photoId}/rating`, {
             method: "PATCH", body: JSON.stringify({ rating: value }),
           });
+          rating.dataset.currentRating = value == null ? "" : String(value);
           $$('[data-rating]', rating).forEach((item) => {
-            item.classList.toggle("active", Number(item.dataset.rating) <= value);
+            item.classList.toggle("active", value != null && Number(item.dataset.rating) <= value);
           });
-          toast("Rating saved");
+          toast(value == null ? "Rating cleared" : "Rating saved");
         } catch (error) { toast(error.message, true); }
       });
     });

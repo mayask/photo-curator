@@ -5,13 +5,16 @@
   <div>
     <a class="back-link" href="/collections">← All collections</a>
     <p class="eyebrow">{{ collection.kind|replace('-', ' ') }}</p>
-    <h1 id="collection-title">{{ collection.title }}</h1>
+    <div class="collection-title-line">
+      <h1 id="collection-title">{{ collection.title }}</h1>
+      <button type="button" class="text-button" id="rename-collection" data-collection-id="{{ collection.id }}">Rename</button>
+    </div>
     <p>{{ collection.description }}</p>
     <div class="detail-meta">
       <span>{{ total }} photos</span>
       {% if collection.starts_at %}<span>{{ collection.starts_at|datetime }}{% if collection.ends_at and collection.ends_at.date() != collection.starts_at.date() %} – {{ collection.ends_at|datetime }}{% endif %}</span>{% endif %}
-      <span>{{ decisions.get('keep', 0) }} kept</span>
-      <span>{{ decisions.get('reject', 0) }} rejected</span>
+      <span><b data-decision-count="keep">{{ decisions.get('keep', 0) }}</b> kept</span>
+      <span><b data-decision-count="reject">{{ decisions.get('reject', 0) }}</b> rejected</span>
     </div>
   </div>
   <div class="review-controls">
@@ -30,17 +33,17 @@
 
 <nav class="decision-tabs" aria-label="Review filters">
   <a href="/collections/{{ collection.id }}" class="{% if not decision_filter %}active{% endif %}">All</a>
-  <a href="?decision=pending" class="{% if decision_filter == 'pending' %}active{% endif %}">To review <span>{{ decisions.get('pending', 0) }}</span></a>
-  <a href="?decision=keep" class="{% if decision_filter == 'keep' %}active{% endif %}">Kept <span>{{ decisions.get('keep', 0) }}</span></a>
-  <a href="?decision=reject" class="{% if decision_filter == 'reject' %}active{% endif %}">Rejected <span>{{ decisions.get('reject', 0) }}</span></a>
+  <a href="?decision=pending" class="{% if decision_filter == 'pending' %}active{% endif %}">To review <span data-decision-count="pending">{{ decisions.get('pending', 0) }}</span></a>
+  <a href="?decision=keep" class="{% if decision_filter == 'keep' %}active{% endif %}">Kept <span data-decision-count="keep">{{ decisions.get('keep', 0) }}</span></a>
+  <a href="?decision=reject" class="{% if decision_filter == 'reject' %}active{% endif %}">Rejected <span data-decision-count="reject">{{ decisions.get('reject', 0) }}</span></a>
 </nav>
 
-<p class="keyboard-hint">Tip: click a photo, then press <kbd>K</kbd> to keep, <kbd>R</kbd> to reject, or <kbd>U</kbd> to reset.</p>
+<p class="keyboard-hint">Tip: click a photo, use <kbd>←</kbd><kbd>→</kbd> to move, then press <kbd>K</kbd> to keep, <kbd>R</kbd> to reject, or <kbd>U</kbd> to reset.</p>
 
 {% if links %}
 <div class="review-grid">
   {% for link in links %}
-  <article class="review-card decision-{{ link.decision }}" tabindex="0" data-link-id="{{ link.id }}">
+  <article class="review-card decision-{{ link.decision }}" tabindex="0" data-link-id="{{ link.id }}" data-current-decision="{{ link.decision }}">
     <a class="review-image" href="/photos/{{ link.photo.id }}">
       {% if link.photo.thumb_path %}<img src="/media/{{ link.photo.thumb_path }}" alt="{{ link.photo.file_name }}" loading="lazy">{% else %}<div class="image-placeholder">Pending</div>{% endif %}
       <span class="rank">#{{ link.rank }}</span>

@@ -2,21 +2,22 @@
 
 A self-hosted, local-first photo library analyzer that turns a large read-only archive into reviewable photo-book suggestions. It scans an SMB share (or a read-only local mount), stores only metadata and generated previews locally, and exposes a simple web review workflow.
 
-> **Source safety:** the source abstraction has no write or delete operation. SMB files are opened with `mode="rb"`; local deployments should mount `/photos:ro`. The application writes only to its `/data` volume.
+> **Source safety:** the source abstraction has no write or delete operation. SMB files are opened with `mode="rb"`; local deployments should mount `/photos:ro`. The Compose container has a read-only root filesystem, drops Linux capabilities, and writes only to its `/data` volume (plus an ephemeral `/tmp`).
 
 ## What it finds
 
 - trips and time/location-based events
+- existing source folders reused as human-authored album clues
 - the most photographed and highest-quality days each year
 - print-worthy highlights with burst and duplicate suppression
 - exact duplicates (SHA-256) and near duplicates (perceptual hashes)
 - rapid series/bursts, with the strongest frames ranked first
 - recurring calendar dates and optionally named public holidays
 - GPS place clusters with offline nearest-city labels
-- face clusters and short-lived clusters that may represent visitors
-- portraits, people, scenery, and year highlights
+- face clusters, people repeatedly seen together, and short-lived clusters that may represent visitors
+- portraits, shared-selfie threads, scenery, and year highlights
 
-Every collection is a suggestion. Originals are never removed or modified. In the web UI you can keep/reject candidates, rate photos, change collection workflow status, and export a CSV manifest for printing or a later copy step.
+Every collection is a suggestion. Originals are never removed or modified. In the web UI you can keep/reject candidates, rate photos, rename suggested collections, change workflow status, and export a CSV manifest for printing or a later copy step.
 
 ## How analysis works
 
@@ -63,7 +64,7 @@ With `AUTO_START=true`, the first full scan starts automatically. It is safe to 
 
 ### Portainer
 
-Create a **Stack** from this repository's `docker-compose.yml`, define the `.env` values in Portainer, and deploy it. Keep the named `photo-curator-data` volume when updating the stack. The default published port is `8787`; set `WEB_PORT` to change it.
+Create a **Stack** from this repository's `docker-compose.yml`, define the variables shown in `.env.example` in Portainer's environment-variable UI, and deploy it. The Compose file does not require a repository `.env` file, so Git-based stacks work without committing secrets. Keep the named `photo-curator-data` volume when updating the stack. The default published port is `8787`; set `WEB_PORT` to change it.
 
 Only one application replica/worker is supported with SQLite. Do not scale this service above one container.
 
@@ -97,6 +98,7 @@ The native SMB mode is simpler in Portainer and does not require a privileged co
 | `AUTO_START` | `true` | Start initial and periodic full scans |
 | `SCAN_INTERVAL_HOURS` | `24` | Rescan interval; `0` disables periodic scans |
 | `MAX_FILE_MB` | `250` | Per-file transfer safety limit |
+| `MAX_IMAGE_MEGAPIXELS` | `100` | Decoded-image memory safety limit |
 | `THUMB_SIZE` / `PREVIEW_SIZE` | `360` / `1600` | Longest edge of local derivatives |
 | `FACE_ANALYSIS` | `true` | YuNet detection and SFace local embeddings |
 | `HOLIDAY_COUNTRY` | empty | Optional code such as `US`, `DE`, or `GB` |
@@ -110,7 +112,7 @@ All supported variables are documented in [`.env.example`](.env.example).
 - SQLite runs in WAL mode with a busy timeout.
 - Jobs, scan tokens, and per-photo states are persistent.
 - Analysis commits after each photo; a restart does not discard completed work.
-- SMB directory and file operations use bounded retries and connection resets.
+- SMB directory scans and whole-file reads use bounded retries and connection resets.
 - A partially unreadable scan does **not** mark unseen photos as deleted.
 - Changed files are reanalyzed based on source size and modification time.
 - Collection keys are stable where possible, preserving manual keep/reject decisions across rebuilds.

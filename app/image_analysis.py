@@ -134,7 +134,7 @@ def _capture_datetime(exif: Any, path: Path, source_mtime: float) -> tuple[datet
                 continue
 
     match = re.search(
-        r"(?<!\d)(20\d{2})[-_]?([01]\d)[-_]?([0-3]\d)[ T_-]?([0-2]\d)[-_.:]?([0-5]\d)[-_.:]?([0-5]\d)(?!\d)",
+        r"(?<!\d)((?:19|20)\d{2})[-_]?([01]\d)[-_]?([0-3]\d)[ T_-]?([0-2]\d)[-_.:]?([0-5]\d)[-_.:]?([0-5]\d)(?!\d)",
         path.stem,
     )
     if match:
@@ -201,6 +201,10 @@ def _quality_metrics(rgb: np.ndarray, width: int, height: int) -> dict[str, floa
         "color": color,
         "resolution": resolution,
     }
+
+
+class ImageTooLargeError(ValueError):
+    pass
 
 
 class FaceAnalyzer:
@@ -318,6 +322,7 @@ class ImageAnalyzer:
         source_mtime: float,
         thumbnail_path: Path,
         preview_path: Path,
+        source_name: str | Path | None = None,
     ) -> AnalysisResult:
         with Image.open(source_path) as original:
             try:
@@ -325,9 +330,30 @@ class ImageAnalyzer:
             except EOFError:
                 pass
             exif = original.getexif()
-            capture_at, capture_source = _capture_datetime(exif, source_path, source_mtime)
+            logical_path = Path(source_name) if source_name is not None else source_path
+            capture_at, capture_source = _capture_datetime(
+                exif, logical_path, source_mtime
+            )
             latitude, longitude, altitude = _extract_gps(exif)
 
+            raw_width, raw_height = original.size
+            megapixels = raw_width * raw_height / 1_000_000
+            if megapixels > self.settings.max_image_megapixels:
+                raise ImageTooLargeError(
+                    f"Image has {megapixels:.1f} megapixels; limit is "
+                    f"MAX_IMAGE_MEGAPIXELS={self.settings.max_image_megapixels}"
+                )
+            orientation = int(_as_float(exif.get(274)) or 1)
+            if orientation in {5, 6, 7, 8}:
+                width, height = raw_height, raw_width
+            else:
+                width, height = raw_width, raw_height
+
+            # JPEG decoders can select a lower-resolution DCT level before loading.
+            # All current analysis operates at preview scale, while the original
+            # dimensions above are retained for print-resolution scoring.
+            working_limit = max(1600, self.settings.preview_size, self.settings.thumb_size)
+            original.draft("RGB", (working_limit, working_limit))
             oriented = ImageOps.exif_transpose(original)
             if oriented.mode not in {"RGB", "RGBA"}:
                 oriented = oriented.convert("RGB")
@@ -337,8 +363,10 @@ class ImageAnalyzer:
                 oriented = background
             else:
                 oriented = oriented.copy()
+            oriented.thumbnail(
+                (working_limit, working_limit), Image.Resampling.LANCZOS
+            )
 
-        width, height = oriented.size
         rgb = np.asarray(oriented, dtype=np.uint8)
         metrics = _quality_metrics(rgb, width, height)
         faces = self.face_analyzer.analyze(rgb)

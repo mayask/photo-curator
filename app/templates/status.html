@@ -3,7 +3,7 @@
 {% block content %}
 <section class="page-heading">
   <div><p class="eyebrow">Long-running work</p><h1>Activity &amp; health</h1><p>Jobs are checkpointed in the database and recover after container restarts.</p></div>
-  <div class="button-row"><button class="primary" data-job="full">Full scan</button><button class="secondary" data-job="scan">Index only</button><button class="secondary" data-job="analyze">Analyze only</button><button class="secondary" data-job="collections">Curate only</button></div>
+  <div class="button-row"><button class="primary" data-job="full">Full scan</button><button class="secondary" data-job="scan">Index only</button><button class="secondary" data-job="analyze">Analyze only</button><button class="secondary" data-job="collections">Curate only</button>{% if status_counts.get('error', 0) %}<button class="secondary" id="retry-errors">Retry errors</button>{% endif %}</div>
 </section>
 
 <section class="status-layout">
@@ -17,8 +17,8 @@
       <div><dt>Source</dt><dd>{{ source_summary }}</dd></div>
       <div><dt>Mode</dt><dd>{{ settings.source_mode|upper }} · read-only application interface</dd></div>
       <div><dt>Database</dt><dd>{{ settings.database_url|replace('/data/', '/data/') }}</dd></div>
-      <div><dt>Automatic scan</dt><dd>{% if settings.auto_start %}Every {{ settings.scan_interval_hours }} hours{% else %}Disabled{% endif %}</dd></div>
-      <div><dt>File limit</dt><dd>{{ settings.max_file_mb }} MB per image</dd></div>
+      <div><dt>Automatic scan</dt><dd>{% if settings.auto_start and settings.scan_interval_hours > 0 %}Every {{ settings.scan_interval_hours }} hours{% elif settings.auto_start %}Initial scan only{% else %}Disabled{% endif %}</dd></div>
+      <div><dt>File limit</dt><dd>{{ settings.max_file_mb }} MB · {{ settings.max_image_megapixels }} megapixels</dd></div>
       <div><dt>Face analysis</dt><dd>{{ 'Enabled' if settings.face_analysis else 'Disabled' }}</dd></div>
     </dl>
   </div>
