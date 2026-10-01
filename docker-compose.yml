@@ -1,9 +1,6 @@
 services:
   photo-curator:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: photo-book-curator:local
+    image: "${IMAGE:-raregoat8804/photo-book-curator:latest}"
     restart: unless-stopped
     stop_grace_period: 30s
     read_only: true

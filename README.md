@@ -52,19 +52,22 @@ Collection generation is a fast database-only pass. It combines adaptive time ga
    SMB_PASSWORD=your-password
    ```
 
-3. Start the service:
+3. Pull the published image and start the service:
 
    ```bash
-   docker compose up -d --build
+   docker compose pull
+   docker compose up -d
    ```
 
 4. Open <http://localhost:8787>.
+
+The default image is [`raregoat8804/photo-book-curator:latest`](https://hub.docker.com/r/raregoat8804/photo-book-curator). Set `IMAGE` to use a pinned version or another registry.
 
 With `AUTO_START=true`, the first full scan starts automatically. It is safe to close the browser. Progress is durable and interrupted work resumes after a normal container restart.
 
 ### Portainer
 
-Create a **Stack** from this repository's `docker-compose.yml`, define the variables shown in `.env.example` in Portainer's environment-variable UI, and deploy it. The Compose file does not require a repository `.env` file, so Git-based stacks work without committing secrets. Keep the named `photo-curator-data` volume when updating the stack. The default published port is `8787`; set `WEB_PORT` to change it.
+Create a **Stack** from this repository's `docker-compose.yml`, define the variables shown in `.env.example` in Portainer's environment-variable UI, and deploy it. Portainer pulls the published Docker Hub image; it does not need to build the source. The Compose file does not require a repository `.env` file, so Git-based stacks work without committing secrets. Keep the named `photo-curator-data` volume when updating the stack. The default published port is `8787`; set `WEB_PORT` to change it.
 
 Only one application replica/worker is supported with SQLite. Do not scale this service above one container.
 
@@ -91,6 +94,8 @@ The native SMB mode is simpler in Portainer and does not require a privileged co
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
+| `IMAGE` | `raregoat8804/photo-book-curator:latest` | Published image or a pinned alternative such as `:0.1.0` |
+| `WEB_PORT` | `8787` | Host port for the web interface |
 | `SOURCE_MODE` | `smb` | `smb` or `local` |
 | `SMB_HOST`, `SMB_SHARE`, `SMB_PATH` | | Read-only SMB target |
 | `SMB_USER`, `SMB_PASSWORD`, `SMB_DOMAIN` | | SMB credentials/domain |
@@ -130,6 +135,15 @@ Face labels are deliberately anonymous (`Person N`) and can make mistakes. GPS c
 The app intentionally has no login because it is designed for a trusted private network. Do not publish it directly to the internet without an authenticating reverse proxy.
 
 ## Development
+
+To build and run the container from the current checkout:
+
+```bash
+docker build -t photo-book-curator:local .
+IMAGE=photo-book-curator:local docker compose up -d
+```
+
+For native development:
 
 ```bash
 python -m venv .venv
