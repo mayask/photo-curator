@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     app_port: int = Field(default=8000, ge=1, le=65535)
     log_level: str = "INFO"
 
+    mcp_enabled: bool = True
+    mcp_bearer_token: SecretStr = SecretStr("")
+    mcp_allowed_hosts: str = ""
+    mcp_log_entries: int = Field(default=200, ge=10, le=2000)
+
     data_dir: Path = Path("./data")
     database_url: str = "sqlite:///./data/photo-curator.db"
 
@@ -72,6 +77,10 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_smb_path(cls, value: str) -> str:
         return value.strip().strip("/\\")
+
+    @property
+    def mcp_allowed_host_list(self) -> list[str]:
+        return [item.strip() for item in self.mcp_allowed_hosts.split(",") if item.strip()]
 
     @property
     def cache_dir(self) -> Path:

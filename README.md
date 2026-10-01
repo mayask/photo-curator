@@ -96,6 +96,10 @@ The native SMB mode is simpler in Portainer and does not require a privileged co
 | --- | --- | --- |
 | `IMAGE` | `raregoat8804/photo-book-curator:latest` | Published image or a pinned alternative such as `:0.1.0` |
 | `WEB_PORT` | `8787` | Host port for the web interface |
+| `MCP_ENABLED` | `true` | Expose bounded read-only diagnostics at `/mcp/` |
+| `MCP_BEARER_TOKEN` | empty | Optional bearer token; recommended on shared networks |
+| `MCP_ALLOWED_HOSTS` | empty | Optional exact Host-header allowlist for DNS-rebinding protection |
+| `MCP_LOG_ENTRIES` | `200` | Size of the sanitized in-memory warning/error ring |
 | `SOURCE_MODE` | `smb` | `smb` or `local` |
 | `SMB_HOST`, `SMB_SHARE`, `SMB_PATH` | | Read-only SMB target |
 | `SMB_USER`, `SMB_PASSWORD`, `SMB_DOMAIN` | | SMB credentials/domain |
@@ -133,6 +137,40 @@ JPEG, PNG, WebP, HEIC/HEIF, TIFF, BMP, and the first frame of GIF images are sup
 Face labels are deliberately anonymous (`Person N`) and can make mistakes. GPS city labels are an offline nearest-city approximation. Technical quality scores are ranking aids—not aesthetic truth. Nothing is automatically deleted.
 
 The app intentionally has no login because it is designed for a trusted private network. Do not publish it directly to the internet without an authenticating reverse proxy.
+
+## Read-only MCP diagnostics
+
+A Streamable HTTP MCP endpoint is available at:
+
+```text
+http://SERVER:8787/mcp/
+```
+
+It is designed for low-token operational debugging from Pi. Its seven tools provide a compact deployment overview, durable job history, paginated photo issues, one-photo diagnostics, collection summaries, a bounded consistency audit, and a sanitized in-memory warning/error ring.
+
+The MCP surface is intentionally narrower than the web application:
+
+- every tool declares the MCP read-only annotation;
+- there is no arbitrary SQL, filesystem, source-photo, preview, or log-file access;
+- no tool can enqueue/cancel jobs or change ratings, decisions, or collections;
+- credentials and deployment identifiers are removed from errors and diagnostic logs;
+- list results are bounded and cursor-paginated;
+- photo paths are excluded by default and must be explicitly requested.
+
+For a shared LAN, generate a long random value for `MCP_BEARER_TOKEN` in Portainer. Keep the same value in a local environment variable used by Pi—do not put it directly in `mcp.json`:
+
+```bash
+export PHOTO_CURATOR_MCP_TOKEN='the value configured in Portainer'
+pi mcp add photo-curator \
+  --url http://SERVER:8787/mcp/ \
+  --bearer-token-env-var PHOTO_CURATOR_MCP_TOKEN \
+  --exposure codemode
+pi mcp list
+```
+
+If the app and Pi run on the same host, use `http://127.0.0.1:8787/mcp/`. If no bearer token is configured, omit `--bearer-token-env-var`; only do this on a trusted private network. Run `/reload` in an existing Pi session after adding or changing the server.
+
+`MCP_ALLOWED_HOSTS` optionally enables exact Host-header validation. Values are comma-separated and must include the port or the SDK's `:*` port wildcard, for example `photos.local:8787,photos.local:*,192.168.1.20:*`. Leave it empty when connecting through changing LAN addresses and rely on network isolation plus the bearer token.
 
 ## Development
 

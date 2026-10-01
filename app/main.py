@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, selectinload
 from app import __version__
 from app.config import Settings, get_settings
 from app.database import database_is_healthy, get_db, init_database
+from app.mcp_server import DiagnosticLogHandler, build_mcp_http_app, create_diagnostic_mcp
 from app.models import Collection, CollectionPhoto, Job, Photo, photo_to_dict
 from app.worker import WorkerService
 
@@ -100,14 +101,33 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
     init_database(settings.database_url)
 
     worker = WorkerService(settings)
+    diagnostic_logs = DiagnosticLogHandler(settings)
+    diagnostic_mcp = (
+        create_diagnostic_mcp(settings, worker, diagnostic_logs)
+        if settings.mcp_enabled
+        else None
+    )
+    mcp_http_app = (
+        build_mcp_http_app(diagnostic_mcp, settings) if diagnostic_mcp else None
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        if start_worker:
-            worker.start()
-        yield
-        if start_worker:
-            worker.stop()
+        root_logger = logging.getLogger()
+        root_logger.addHandler(diagnostic_logs)
+        try:
+            async with AsyncExitStack() as stack:
+                if diagnostic_mcp:
+                    await stack.enter_async_context(diagnostic_mcp.session_manager.run())
+                if start_worker:
+                    worker.start()
+                try:
+                    yield
+                finally:
+                    if start_worker:
+                        worker.stop()
+        finally:
+            root_logger.removeHandler(diagnostic_logs)
 
     application = FastAPI(
         title=settings.app_name,
@@ -116,6 +136,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
     )
     application.state.settings = settings
     application.state.worker = worker
+    application.state.diagnostic_mcp = diagnostic_mcp
 
     templates = Jinja2Templates(directory=BASE_DIR / "templates")
     asset_version = max(
@@ -604,6 +625,9 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
             media_type="text/csv",
             headers={"Content-Disposition": f'attachment; filename="{safe_name or "collection"}.csv"'},
         )
+
+    if mcp_http_app:
+        application.mount("/mcp", mcp_http_app, name="mcp")
 
     return application
 

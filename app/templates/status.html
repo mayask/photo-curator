@@ -17,6 +17,7 @@
       <div><dt>Source</dt><dd>{{ source_summary }}</dd></div>
       <div><dt>Mode</dt><dd>{{ settings.source_mode|upper }} · read-only application interface</dd></div>
       <div><dt>Database</dt><dd>SQLite WAL · local writable data volume</dd></div>
+      <div><dt>MCP diagnostics</dt><dd>{% if settings.mcp_enabled %}/mcp/ · {{ 'bearer protected' if settings.mcp_bearer_token.get_secret_value() else 'trusted network only' }}{% else %}Disabled{% endif %}</dd></div>
       <div><dt>Automatic scan</dt><dd>{% if settings.auto_start and settings.scan_interval_hours > 0 %}Every {{ settings.scan_interval_hours }} hours{% elif settings.auto_start %}Initial scan only{% else %}Disabled{% endif %}</dd></div>
       {% if settings.scan_max_files %}<div><dt>Scan scope</dt><dd>QA limit · first {{ settings.scan_max_files }} photos (cleanup disabled)</dd></div>{% endif %}
       <div><dt>File limit</dt><dd>{{ settings.max_file_mb }} MB · {{ settings.max_image_megapixels }} megapixels</dd></div>
