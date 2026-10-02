@@ -161,16 +161,14 @@ class SMBPhotoSource(PhotoSource):
         except ImportError as exc:  # pragma: no cover - dependency is in the image
             raise SourceError("smbprotocol is required for SOURCE_MODE=smb") from exc
         self.smbclient = smbclient
-        username = settings.smb_user
+        self._host = settings.smb_host
+        self._username = settings.smb_user
         if settings.smb_domain:
-            username = f"{settings.smb_domain}\\{username}"
-        self.smbclient.register_session(
-            settings.smb_host,
-            username=username,
-            password=settings.smb_password.get_secret_value(),
-            port=settings.smb_port,
-            connection_timeout=settings.smb_connection_timeout,
-        )
+            self._username = f"{settings.smb_domain}\\{self._username}"
+        self._password = settings.smb_password.get_secret_value()
+        self._port = settings.smb_port
+        self._connection_timeout = settings.smb_connection_timeout
+        self._register_session()
         root_parts = [settings.smb_host, settings.smb_share]
         if settings.smb_path:
             root_parts.extend(
@@ -179,6 +177,15 @@ class SMBPhotoSource(PhotoSource):
                 if part
             )
         self.root = "\\\\" + "\\".join(root_parts)
+
+    def _register_session(self) -> None:
+        self.smbclient.register_session(
+            self._host,
+            username=self._username,
+            password=self._password,
+            port=self._port,
+            connection_timeout=self._connection_timeout,
+        )
 
     def _remote_path(self, relative_path: str = "") -> str:
         safe_path = _safe_relative_path(relative_path)
@@ -211,6 +218,13 @@ class SMBPhotoSource(PhotoSource):
                     self.smbclient.reset_connection_cache(fail_on_error=False)
                 except Exception:
                     pass
+                # reset_connection_cache also drops the authenticated session.
+                # Re-register it before retrying or every later read falls back to
+                # unauthenticated negotiation despite valid configured credentials.
+                try:
+                    self._register_session()
+                except Exception as reconnect_error:
+                    logger.warning("SMB session re-registration failed: %s", reconnect_error)
         raise SourceError(f"SMB {label} failed after {attempts} attempts: {last_error}")
 
     def walk(self) -> Iterator[SourceEntry]:

@@ -51,6 +51,7 @@ def test_mcp_tools_are_read_only_and_bounded(settings):
         async with Client(server, raise_exceptions=True) as client:
             tools = await client.list_tools()
             overview = await client.call_tool("get_overview", {})
+            source = await client.call_tool("check_source_connection", {})
             jobs = await client.call_tool("list_recent_jobs", {"limit": 2})
             issues = await client.call_tool("list_photo_issues", {"limit": 2})
             photo = await client.call_tool("get_photo_diagnostic", {"photo_id": photo_id})
@@ -60,6 +61,7 @@ def test_mcp_tools_are_read_only_and_bounded(settings):
             return (
                 tools.tools,
                 overview.structured_content,
+                source.structured_content,
                 jobs.structured_content,
                 issues.structured_content,
                 photo.structured_content,
@@ -68,12 +70,13 @@ def test_mcp_tools_are_read_only_and_bounded(settings):
                 logs.structured_content,
             )
 
-    tools, overview, jobs, issues, photo, collections, audit, logs = asyncio.run(
+    tools, overview, source, jobs, issues, photo, collections, audit, logs = asyncio.run(
         inspect_server()
     )
 
     assert {tool.name for tool in tools} == {
         "get_overview",
+        "check_source_connection",
         "list_recent_jobs",
         "list_photo_issues",
         "get_photo_diagnostic",
@@ -85,6 +88,8 @@ def test_mcp_tools_are_read_only_and_bounded(settings):
     assert overview["application"]["database_healthy"] is True
     assert overview["library"]["photos_active"] == 2
     assert overview["library"]["analysis_states"] == {"done": 1, "error": 1}
+    assert source["ok"] is True
+    assert source["source_write_api_available"] is False
     assert jobs["items"][0]["kind"] == "scan"
     assert jobs["items"][0]["status"] == "completed"
     assert jobs["next_before_id"] is None

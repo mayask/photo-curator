@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import shutil
+import time
 from collections import deque
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -24,6 +25,7 @@ from app import __version__
 from app.config import Settings
 from app.database import database_is_healthy, session_factory
 from app.models import Collection, CollectionPhoto, Face, Job, Photo
+from app.source import build_source
 from app.worker import WorkerService
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
@@ -334,6 +336,29 @@ def create_diagnostic_mcp(
             "data_volume": disk,
             "warnings": warnings,
         }
+
+    @server.tool(title="Source connectivity", annotations=READ_ONLY)
+    def check_source_connection() -> dict[str, Any]:
+        """Test configured read-only source authentication and listing without reading a photo."""
+        started = time.monotonic()
+        try:
+            source = build_source(settings)
+            message = source.test_connection()
+            return {
+                "ok": True,
+                "source_mode": settings.source_mode,
+                "message": sanitizer.clean(message),
+                "duration_ms": round((time.monotonic() - started) * 1000),
+                "source_write_api_available": False,
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "source_mode": settings.source_mode,
+                "error": sanitizer.clean(exc),
+                "duration_ms": round((time.monotonic() - started) * 1000),
+                "source_write_api_available": False,
+            }
 
     @server.tool(title="Recent jobs", annotations=READ_ONLY)
     def list_recent_jobs(

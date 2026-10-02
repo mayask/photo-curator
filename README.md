@@ -146,7 +146,7 @@ A Streamable HTTP MCP endpoint is available at:
 http://SERVER:8787/mcp/
 ```
 
-It is designed for low-token operational debugging from Pi. Its seven tools provide a compact deployment overview, durable job history, paginated photo issues, one-photo diagnostics, collection summaries, a bounded consistency audit, and a sanitized in-memory warning/error ring.
+It is designed for low-token operational debugging from Pi. Its eight tools provide a compact deployment overview, a read-only source connectivity check, durable job history, paginated photo issues, one-photo diagnostics, collection summaries, a bounded consistency audit, and a sanitized in-memory warning/error ring.
 
 The MCP surface is intentionally narrower than the web application:
 

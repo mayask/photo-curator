@@ -66,8 +66,9 @@ class WorkerService:
             interrupted = list(session.scalars(select(Job).where(Job.status == "running")))
             for job in interrupted:
                 job.status = "queued"
-                job.phase = "queued"
-                job.message = "Resuming after application restart"
+                # Preserve the durable phase checkpoint. A full job that had
+                # reached analysis must not walk the whole source again.
+                job.message = f"Resuming {job.phase} after application restart"
                 job.started_at = None
             session.execute(
                 update(Photo)
@@ -170,8 +171,11 @@ class WorkerService:
                 job.finished_at = utcnow()
                 return None
             job.status = "running"
-            job.phase = "starting"
-            job.message = "Starting"
+            if job.phase in {"queued", "starting"}:
+                job.phase = "starting"
+                job.message = "Starting"
+            else:
+                job.message = f"Resuming from {job.phase} checkpoint"
             job.started_at = utcnow()
             job.heartbeat_at = utcnow()
             return job.id
@@ -182,20 +186,43 @@ class WorkerService:
             if not job:
                 return
             kind = job.kind
+            resume_phase = job.phase
+
+        run_scan = kind in {"full", "scan"}
+        run_analyze = kind in {"full", "analyze"}
+        run_collections = kind in {"full", "collections"}
+        if kind == "full" and resume_phase == "analyzing":
+            run_scan = False
+        elif kind == "full" and resume_phase == "collections":
+            run_scan = False
+            run_analyze = False
 
         source: PhotoSource | None = None
-        if kind in {"full", "scan", "analyze"}:
-            self._set_progress(job_id, "connecting", 0, 0, "Testing read-only source access")
+        if run_scan or run_analyze:
+            connection_phase = "analyzing" if resume_phase == "analyzing" else "connecting"
+            self._set_progress(
+                job_id,
+                connection_phase,
+                0,
+                0,
+                "Reconnecting to read-only source"
+                if resume_phase == "analyzing"
+                else "Testing read-only source access",
+            )
             source = build_source(self.settings)
             source.test_connection()
 
-        if kind in {"full", "scan"}:
+        if run_scan:
             assert source
             self._scan(job_id, source)
-        if kind in {"full", "analyze"}:
+        if run_analyze:
             assert source
+            # This phase write is the durable boundary between inventory and
+            # expensive per-photo work. Restarts continue from pending/error
+            # photo rows and do not repeat the completed source walk.
+            self._set_progress(job_id, "analyzing", 0, 0, "Preparing incremental analysis")
             self._analyze(job_id, source)
-        if kind in {"full", "collections"}:
+        if run_collections:
             self._build_collections(job_id)
         self._finish_job(job_id, "completed", "Finished successfully")
 
@@ -556,7 +583,8 @@ class WorkerService:
             if not job:
                 return
             job.status = "queued"
-            job.phase = "queued"
+            # Keep the current phase so _execute_job can resume at the next
+            # incomplete stage rather than restarting a full job from scan.
             job.message = message
             job.error = None
             job.started_at = None

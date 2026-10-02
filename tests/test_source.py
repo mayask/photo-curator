@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from pydantic import SecretStr
 
-from app.source import LocalPhotoSource
+from app.source import LocalPhotoSource, SMBPhotoSource
 
 
 def test_local_source_walk_is_filtered_and_read_only(settings, tmp_path: Path):
@@ -40,3 +43,36 @@ def test_local_source_rejects_path_traversal(settings):
         with pytest.raises(ValueError, match="traversal"):
             with source.open_binary(unsafe_path):
                 pass
+
+
+def test_smb_retry_restores_authenticated_session(settings, monkeypatch):
+    calls: list[tuple[str, str]] = []
+    fake_client = SimpleNamespace(
+        register_session=lambda host, **kwargs: calls.append(("register", host)),
+        reset_connection_cache=lambda **kwargs: calls.append(("reset", "")),
+    )
+    monkeypatch.setitem(sys.modules, "smbclient", fake_client)
+    settings.source_mode = "smb"
+    settings.smb_host = "nas.test"
+    settings.smb_share = "photos"
+    settings.smb_user = "reader"
+    settings.smb_password = SecretStr("not-logged")
+    settings.smb_connection_timeout = 1
+
+    source = SMBPhotoSource(settings)
+    attempts = 0
+
+    def transient_operation():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("temporary disconnect")
+        return "ok"
+
+    monkeypatch.setattr("app.source.time.sleep", lambda _delay: None)
+    assert source._retry(transient_operation, "test", attempts=2) == "ok"
+    assert calls == [
+        ("register", "nas.test"),
+        ("reset", ""),
+        ("register", "nas.test"),
+    ]

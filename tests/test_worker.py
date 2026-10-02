@@ -45,6 +45,7 @@ def test_recovery_preserves_attempt_count_and_requeues_jobs(settings):
         job = session.scalar(select(Job))
         photo = session.scalar(select(Photo))
         assert job is not None and job.status == "queued"
+        assert job.phase == "analysis"
         assert photo is not None and photo.analysis_status == "error"
         assert photo.analysis_attempts == 2
         assert "interrupted" in (photo.analysis_error or "").lower()
@@ -52,6 +53,47 @@ def test_recovery_preserves_attempt_count_and_requeues_jobs(settings):
     worker._stop_event.set()
     with pytest.raises(WorkerStopping):
         worker._check_cancelled(job.id)
+
+
+@pytest.mark.parametrize(
+    ("checkpoint", "expected_calls"),
+    [
+        ("analyzing", ["connect", "analyze", "collections"]),
+        ("collections", ["collections"]),
+    ],
+)
+def test_full_job_resumes_from_durable_phase(
+    settings, monkeypatch, checkpoint, expected_calls
+):
+    init_database(settings.database_url)
+    with session_scope() as session:
+        job = Job(kind="full", status="running", phase=checkpoint)
+        session.add(job)
+        session.flush()
+        job_id = job.id
+
+    calls: list[str] = []
+
+    class Source:
+        def test_connection(self):
+            calls.append("connect")
+
+    monkeypatch.setattr("app.worker.build_source", lambda _settings: Source())
+    worker = WorkerService(settings)
+    monkeypatch.setattr(worker, "_scan", lambda _job_id, _source: calls.append("scan"))
+    monkeypatch.setattr(
+        worker, "_analyze", lambda _job_id, _source: calls.append("analyze")
+    )
+    monkeypatch.setattr(
+        worker, "_build_collections", lambda _job_id: calls.append("collections")
+    )
+
+    worker._execute_job(job_id)
+
+    assert calls == expected_calls
+    with session_scope() as session:
+        job = session.get(Job, job_id)
+        assert job is not None and job.status == "completed"
 
 
 def test_partial_scan_never_deactivates_unseen_photos(settings):
