@@ -1,13 +1,15 @@
 {% extends "base.html" %}
 {% from "_collection_card.html" import collection_card %}
+{% from "_date_heading.html" import date_heading, grouping_options %}
 {% block title %}Collections · {{ app_name }}{% endblock %}
 {% block content %}
 <section class="page-heading">
-  <div><p class="eyebrow">Automatic storytelling</p><h1>Collections</h1><p>Each set is a suggestion, not a verdict. Open one to review its ranked photos.</p></div>
-  <button class="secondary" data-job="collections">Rebuild suggestions</button>
+  <div><p class="eyebrow">Automatic storytelling</p><h1>Collections</h1><p>Newest photos first. Collection dates reflect their latest photo, not the last rebuild.</p></div>
+  <div class="curation-actions"><button class="secondary" data-job="collections" title="Uses stored analysis only. Keeps your decisions, ratings and renamed titles.">Rebuild suggestions</button><small>Regenerates curation only · no scan or photo downloads</small></div>
 </section>
 
 <form class="filter-bar" method="get">
+  <input type="hidden" name="per_page" value="{{ per_page }}">
   <label>Type
     <select name="kind" onchange="this.form.submit()">
       <option value="">All types</option>
@@ -20,13 +22,19 @@
       {% for item in ['unreviewed', 'reviewing', 'shortlisted', 'complete', 'hidden'] %}<option value="{{ item }}" {% if item == selected_status %}selected{% endif %}>{{ item|title }}</option>{% endfor %}
     </select>
   </label>
-  {% if selected_kind or selected_status %}<a href="/collections" class="clear-filter">Clear filters</a>{% endif %}
+  <label>Group by
+    <select name="group" onchange="this.form.submit()">{{ grouping_options(grouping) }}</select>
+  </label>
+  {% if selected_kind or selected_status %}<a href="/collections?group={{ grouping }}&amp;per_page={{ per_page }}" class="clear-filter">Clear filters</a>{% endif %}
   <span class="result-count">{{ "{:,}".format(total) }} collections</span>
 </form>
 
 {% if collections %}
 <div class="collection-grid">
-  {% for collection in collections %}{{ collection_card(collection, counts) }}{% endfor %}
+  {% for section in date_sections %}
+    {{ date_heading(section, grouping) }}
+    {% for collection in section.records %}{{ collection_card(collection, counts) }}{% endfor %}
+  {% endfor %}
 </div>
 {% else %}
 <div class="empty-state"><h3>No matching collections</h3><p>Try another filter, or run curation after more photos finish analysis.</p></div>
@@ -34,7 +42,7 @@
 
 {% if pages > 1 %}
 <nav class="pagination">
-  {% set suffix %}{% if selected_kind %}&kind={{ selected_kind|urlencode }}{% endif %}{% if selected_status %}&status={{ selected_status|urlencode }}{% endif %}{% endset %}
+  {% set suffix %}&group={{ grouping }}&per_page={{ per_page }}{% if selected_kind %}&kind={{ selected_kind|urlencode }}{% endif %}{% if selected_status %}&status={{ selected_status|urlencode }}{% endif %}{% endset %}
   {% if page > 1 %}<a href="?page={{ page - 1 }}{{ suffix }}">← Previous</a>{% endif %}
   <span>Page {{ page }} of {{ pages }}</span>
   {% if page < pages %}<a href="?page={{ page + 1 }}{{ suffix }}">Next →</a>{% endif %}

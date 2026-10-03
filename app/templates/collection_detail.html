@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_date_heading.html" import date_heading, grouping_options %}
 {% block title %}{{ collection.title }} · {{ app_name }}{% endblock %}
 {% block content %}
 <section class="collection-header">
@@ -25,28 +26,41 @@
     </label>
     <a class="button secondary" href="/collections/{{ collection.id }}/manifest.csv">Export CSV</a>
     <form method="post" action="/api/collections/{{ collection.id }}/keep-top" class="inline-form">
-      <input type="number" name="count" value="30" min="1" max="500" aria-label="Number of top photos">
-      <button class="secondary" type="submit">Keep top</button>
+      <input type="number" name="count" value="30" min="1" max="500" aria-label="Number of best photos">
+      <button class="secondary" type="submit" title="Select by quality rank, not by date or displayed position">Keep best</button>
     </form>
+    <small class="control-hint">Quality selection · browsing order is newest first</small>
   </div>
 </section>
 
 <nav class="decision-tabs" aria-label="Review filters">
-  <a href="/collections/{{ collection.id }}" class="{% if not decision_filter %}active{% endif %}">All</a>
-  <a href="?decision=pending" class="{% if decision_filter == 'pending' %}active{% endif %}">To review <span data-decision-count="pending">{{ decisions.get('pending', 0) }}</span></a>
-  <a href="?decision=keep" class="{% if decision_filter == 'keep' %}active{% endif %}">Kept <span data-decision-count="keep">{{ decisions.get('keep', 0) }}</span></a>
-  <a href="?decision=reject" class="{% if decision_filter == 'reject' %}active{% endif %}">Rejected <span data-decision-count="reject">{{ decisions.get('reject', 0) }}</span></a>
+  {% set view_suffix %}group={{ grouping }}&per_page={{ per_page }}{% endset %}
+  <a href="?{{ view_suffix }}" class="{% if not decision_filter %}active{% endif %}">All</a>
+  <a href="?decision=pending&{{ view_suffix }}" class="{% if decision_filter == 'pending' %}active{% endif %}">To review <span data-decision-count="pending">{{ decisions.get('pending', 0) }}</span></a>
+  <a href="?decision=keep&{{ view_suffix }}" class="{% if decision_filter == 'keep' %}active{% endif %}">Kept <span data-decision-count="keep">{{ decisions.get('keep', 0) }}</span></a>
+  <a href="?decision=reject&{{ view_suffix }}" class="{% if decision_filter == 'reject' %}active{% endif %}">Rejected <span data-decision-count="reject">{{ decisions.get('reject', 0) }}</span></a>
 </nav>
+
+<form class="filter-bar review-view" method="get">
+  <input type="hidden" name="per_page" value="{{ per_page }}">
+  {% if decision_filter %}<input type="hidden" name="decision" value="{{ decision_filter }}">{% endif %}
+  <label>Group by
+    <select name="group" onchange="this.form.submit()">{{ grouping_options(grouping) }}</select>
+  </label>
+  <span class="result-count">Newest photos first · badges show quality rank</span>
+</form>
 
 <p class="keyboard-hint">Tip: click a photo, use <kbd>←</kbd><kbd>→</kbd> to move, then press <kbd>K</kbd> to keep, <kbd>R</kbd> to reject, or <kbd>U</kbd> to reset.</p>
 
 {% if links %}
 <div class="review-grid">
-  {% for link in links %}
+  {% for section in date_sections %}
+  {{ date_heading(section, grouping) }}
+  {% for link in section.records %}
   <article class="review-card decision-{{ link.decision }}" tabindex="0" data-link-id="{{ link.id }}" data-current-decision="{{ link.decision }}">
     <a class="review-image" href="/photos/{{ link.photo.id }}">
       {% if link.photo.thumb_path %}<img src="/media/{{ link.photo.thumb_path }}" alt="{{ link.photo.file_name }}" loading="lazy">{% else %}<div class="image-placeholder">Pending</div>{% endif %}
-      <span class="rank">#{{ link.rank }}</span>
+      <span class="rank" title="Quality rank, independent of date order">Quality #{{ link.rank }}</span>
       {% if link.photo.face_count %}<span class="face-count">{{ link.photo.face_count }} ◉</span>{% endif %}
     </a>
     <div class="review-copy">
@@ -61,6 +75,7 @@
     </div>
   </article>
   {% endfor %}
+  {% endfor %}
 </div>
 {% else %}
 <div class="empty-state"><h3>No photos in this view</h3><p>Choose another review filter.</p></div>
@@ -68,9 +83,10 @@
 
 {% if pages > 1 %}
 <nav class="pagination">
-  {% if page > 1 %}<a href="?page={{ page - 1 }}{% if decision_filter %}&decision={{ decision_filter }}{% endif %}">← Previous</a>{% endif %}
+  {% set suffix %}&group={{ grouping }}&per_page={{ per_page }}{% if decision_filter %}&decision={{ decision_filter }}{% endif %}{% endset %}
+  {% if page > 1 %}<a href="?page={{ page - 1 }}{{ suffix }}">← Previous</a>{% endif %}
   <span>Page {{ page }} of {{ pages }}</span>
-  {% if page < pages %}<a href="?page={{ page + 1 }}{% if decision_filter %}&decision={{ decision_filter }}{% endif %}">Next →</a>{% endif %}
+  {% if page < pages %}<a href="?page={{ page + 1 }}{{ suffix }}">Next →</a>{% endif %}
 </nav>
 {% endif %}
 {% endblock %}

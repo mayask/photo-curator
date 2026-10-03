@@ -3,10 +3,11 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from itertools import combinations
 from pathlib import PurePosixPath
 
@@ -72,7 +73,7 @@ def haversine_km(
         math.sin(delta_lat / 2) ** 2
         + math.cos(lat_a) * math.cos(lat_b) * math.sin(delta_lon / 2) ** 2
     )
-    return earth_radius_km * 2 * math.asin(math.sqrt(value))
+    return earth_radius_km * 2 * math.asin(math.sqrt(min(1.0, max(0.0, value))))
 
 
 def hash_distance(left: str | None, right: str | None) -> int:
@@ -343,6 +344,188 @@ def _cluster_faces(session: Session) -> dict[int, list[int]]:
     return result
 
 
+@dataclass(frozen=True, slots=True)
+class LocationDay:
+    day: date
+    latitude: float
+    longitude: float
+
+
+def _location_days(photos: Sequence[Photo], radius_km: float) -> list[LocationDay]:
+    """One robust location vote per day: a photo-heavy holiday must not become home."""
+    by_day: dict[date, list[Photo]] = defaultdict(list)
+    for photo in photos:
+        if (
+            photo.capture_at
+            and photo.latitude is not None
+            and photo.longitude is not None
+            and math.isfinite(photo.latitude)
+            and math.isfinite(photo.longitude)
+            and abs(photo.latitude) <= 90
+            and abs(photo.longitude) <= 180
+        ):
+            by_day[photo.capture_at.date()].append(photo)
+
+    days: list[LocationDay] = []
+    for day, group in sorted(by_day.items()):
+        # A median of all coordinates could land between home and a distant
+        # destination. Seed from the most photographed small cell instead,
+        # then use nearby observations, not reverse-geocoder city names.
+        cells: dict[tuple[int, int], list[Photo]] = defaultdict(list)
+        for photo in group:
+            cells[(round(photo.latitude * 10), round(photo.longitude * 10))].append(photo)  # type: ignore[operator]
+        seed = max(cells.values(), key=len)[0]
+        assert seed.latitude is not None and seed.longitude is not None
+        nearby = [
+            photo for photo in group
+            if haversine_km(seed.latitude, seed.longitude, photo.latitude, photo.longitude) <= radius_km  # type: ignore[arg-type]
+        ]
+        # Use the observation nearest the median, unwrapping longitude around
+        # the seed first. This avoids inventing a location between antipodes.
+        median_latitude = float(np.median([photo.latitude for photo in nearby]))
+        median_longitude = float(np.median([
+            (photo.longitude - seed.longitude + 180) % 360 - 180 + seed.longitude  # type: ignore[operator]
+            for photo in nearby
+        ]))
+        median_longitude = (median_longitude + 180) % 360 - 180
+        representative = min(
+            nearby,
+            key=lambda photo: haversine_km(
+                median_latitude, median_longitude, photo.latitude, photo.longitude  # type: ignore[arg-type]
+            ),
+        )
+        days.append(LocationDay(day, representative.latitude, representative.longitude))  # type: ignore[arg-type]
+    return days
+
+
+def _routine_place(days: Sequence[LocationDay], radius_km: float) -> tuple[float, float] | None:
+    """Require recurring location evidence over weeks, not sheer image volume."""
+    if len(days) < 5:
+        return None
+    coordinates = np.radians([(item.latitude, item.longitude) for item in days])
+    latitudes, longitudes = coordinates[:, 0], coordinates[:, 1]
+    haversine = (
+        np.sin((latitudes[:, None] - latitudes[None, :]) / 2) ** 2
+        + np.cos(latitudes[:, None]) * np.cos(latitudes[None, :])
+        * np.sin((longitudes[:, None] - longitudes[None, :]) / 2) ** 2
+    )
+    distances = 2 * 6371.0088 * np.arcsin(np.sqrt(np.clip(haversine, 0, 1)))
+    neighbors = distances <= radius_km
+    counts = neighbors.sum(axis=1)
+    # Prefer recent evidence when two equally strong neighborhoods exist.
+    anchor_index = len(days) - 1 - int(np.argmax(counts[::-1]))
+    members = [item for item, near in zip(days, neighbors[anchor_index], strict=True) if near]
+    if len(members) < max(5, math.ceil(len(days) / 2)):
+        return None
+    if (members[-1].day - members[0].day).days < 14:
+        return None
+    anchor = days[anchor_index]
+    return anchor.latitude, anchor.longitude
+
+
+def _trip_specs(photos: Sequence[Photo], settings: Settings) -> list[CollectionSpec]:
+    """Suggest bounded departures and returns, never a dense run at a residence."""
+    # File modification times often reflect imports/backups rather than travel.
+    # Without trustworthy time and GPS evidence, retain event/place suggestions
+    # instead of guessing that a trip happened.
+    trusted = sorted(
+        (
+            photo for photo in photos
+            if photo.capture_at and photo.capture_source in {"exif", "filename"}
+        ),
+        key=lambda photo: (photo.capture_at, photo.id),
+    )
+    if not trusted:
+        return []
+    radius = settings.trip_home_radius_km
+    minimum_distance = max(settings.trip_min_distance_km, radius * 2)
+    days = _location_days(trusted, radius)
+    dates = [item.day for item in days]
+    capture_times = [photo.capture_at for photo in trusted]
+    specs: list[CollectionSpec] = []
+    index = 0
+    while index < len(days):
+        departure = days[index]
+        before = days[
+            bisect_left(dates, departure.day - timedelta(days=settings.trip_context_days)):index
+        ]
+        home = _routine_place(before, radius)
+        if home is None or haversine_km(*home, departure.latitude, departure.longitude) < minimum_distance:
+            index += 1
+            continue
+        home_before = [
+            item for item in before
+            if haversine_km(*home, item.latitude, item.longitude) <= radius
+        ]
+        if not home_before or (departure.day - home_before[-1].day).days > 14:
+            index += 1
+            continue
+
+        return_index = index + 1
+        while return_index < len(days):
+            observation = days[return_index]
+            if (observation.day - departure.day).days > settings.trip_max_days:
+                break
+            if haversine_km(*home, observation.latitude, observation.longitude) <= radius:
+                break
+            return_index += 1
+        if return_index == len(days):
+            index += 1
+            continue
+        returned = days[return_index]
+        if (
+            (returned.day - departure.day).days > settings.trip_max_days
+            or haversine_km(*home, returned.latitude, returned.longitude) > radius
+        ):
+            index += 1
+            continue
+        after = days[
+            return_index:bisect_right(dates, returned.day + timedelta(days=settings.trip_context_days))
+        ]
+        routine_after = _routine_place(after, radius)
+        if routine_after is None or haversine_km(*home, *routine_after) > radius:
+            index += 1
+            continue
+
+        start_time = datetime.combine(departure.day, datetime.min.time())
+        return_time = datetime.combine(returned.day, datetime.min.time())
+        run = [
+            photo
+            for photo in trusted[
+                bisect_left(capture_times, start_time):bisect_left(capture_times, return_time)
+            ]
+            if photo.latitude is None or photo.longitude is None
+            or haversine_km(*home, photo.latitude, photo.longitude) > radius
+        ]
+        if not run:
+            index += 1
+            continue
+        start, end = run[0].capture_at, run[-1].capture_at
+        assert start and end
+        span = (end.date() - start.date()).days + 1
+        if len(run) < max(12, span * 3):
+            index += 1
+            continue
+        place = _dominant_place(run)
+        title = f"Trip to {place}" if place else "Away and back"
+        title += f" — {_time_label(start, end)}"
+        specs.append(
+            _make_spec(
+                f"trip:{run[0].id}",
+                "trip",
+                title,
+                f"{len(run)} photos over {span} days, at least {minimum_distance:g} km from a "
+                f"recurring location observed before departure and again after return on "
+                f"{returned.day.strftime('%b %-d, %Y')}. GPS-day evidence distinguishes "
+                "this journey from a long stay or a move; nearby city names are approximate.",
+                run,
+                "away-and-return evidence",
+            )
+        )
+        index = return_index
+    return specs
+
+
 def _event_specs(photos: Sequence[Photo], settings: Settings) -> list[CollectionSpec]:
     specs: list[CollectionSpec] = []
     events = split_events(photos, settings)
@@ -372,47 +555,7 @@ def _event_specs(photos: Sequence[Photo], settings: Settings) -> list[Collection
             )
         )
 
-    # Multi-day, high-density runs become trip suggestions.
-    dense_events = [event for event in qualifying if event[0].capture_at]
-    current: list[Photo] = []
-    trip_runs: list[list[Photo]] = []
-    previous_day: date | None = None
-    for event in dense_events:
-        event_day = event[0].capture_at.date()  # type: ignore[union-attr]
-        if previous_day is None or (event_day - previous_day).days <= 2:
-            current.extend(event)
-        else:
-            if current:
-                trip_runs.append(current)
-            current = list(event)
-        previous_day = event[-1].capture_at.date()  # type: ignore[union-attr]
-        if current and (current[-1].capture_at.date() - current[0].capture_at.date()).days >= 14:  # type: ignore[union-attr]
-            trip_runs.append(current)
-            current = []
-            previous_day = None
-    if current:
-        trip_runs.append(current)
-
-    for run in trip_runs:
-        start, end = run[0].capture_at, run[-1].capture_at
-        if not start or not end:
-            continue
-        days = (end.date() - start.date()).days + 1
-        if days < 2 or len(run) < max(12, days * 3):
-            continue
-        place = _dominant_place(run)
-        title = f"Trip to {place}" if place else "Multi-day trip"
-        title += f" — {_time_label(start, end)}"
-        specs.append(
-            _make_spec(
-                f"trip:{run[0].id}",
-                "trip",
-                title,
-                f"A dense {days}-day sequence with {len(run)} photos. Review the top-ranked frames for a photo-book chapter.",
-                run,
-                "trip highlight",
-            )
-        )
+    specs.extend(_trip_specs(photos, settings))
     return specs
 
 
@@ -776,7 +919,11 @@ def _highlight_specs(photos: Sequence[Photo]) -> list[CollectionSpec]:
                 f"highlights:year:{year}",
                 "highlights",
                 f"Best of {year}",
-                f"A diverse shortlist of {len(selected)} technically strong photos from {len(group)} analyzed in {year}.",
+                f"{len(selected)} picks from {len(group)} analyzed photos captured in {year}. "
+                "Selection favors sharpness, exposure, contrast, color and print resolution; "
+                "your star ratings contribute too. Exact duplicates and similar burst frames "
+                "are reduced, with at most five picks per day. Displayed newest first; "
+                "quality badges retain the selection rank, not an aesthetic verdict.",
                 selected,
                 "year highlight",
             )
@@ -931,7 +1078,7 @@ def persist_collection_specs(
         for photo_id, old_link in list(old_links.items()):
             if photo_id in wanted_ids:
                 continue
-            if old_link.decision == "pending":
+            if old_link.decision == "pending" and not old_link.note:
                 session.delete(old_link)
             else:
                 # Never erase a human review decision just because a later
@@ -939,6 +1086,12 @@ def persist_collection_specs(
                 old_link.rank = retained_rank
                 old_link.reason = "Retained from an earlier suggestion after manual review"
                 retained_rank += 1
+                # Timeline dates describe every displayed photo, including
+                # manually retained frames outside the new suggestion range.
+                captured = old_link.photo.capture_at
+                if captured:
+                    collection.starts_at = min(collection.starts_at or captured, captured)
+                    collection.ends_at = max(collection.ends_at or captured, captured)
         for rank, candidate in enumerate(spec.links, 1):
             link = old_links.get(candidate.photo.id)
             if link is None:
@@ -959,7 +1112,9 @@ def persist_collection_specs(
     for key, collection in existing.items():
         if key in desired_keys or not collection.automatic:
             continue
-        has_review_decisions = any(link.decision != "pending" for link in collection.photos)
+        has_review_decisions = any(
+            link.decision != "pending" or link.note for link in collection.photos
+        )
         if collection.status == "unreviewed" and not has_review_decisions:
             session.delete(collection)
         elif "Archived automatic suggestion" not in collection.description:

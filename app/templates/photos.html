@@ -1,12 +1,14 @@
 {% extends "base.html" %}
+{% from "_date_heading.html" import date_heading, grouping_options %}
 {% block title %}Library · {{ app_name }}{% endblock %}
 {% block content %}
 <section class="page-heading">
-  <div><p class="eyebrow">Indexed archive</p><h1>Photo library</h1><p>Browse local previews and metadata without changing source files.</p></div>
+  <div><p class="eyebrow">Indexed archive</p><h1>Photo library</h1><p>Newest photos first. Browse local previews without changing source files.</p></div>
   <button class="secondary" data-job="analyze">Analyze pending</button>
 </section>
 
 <form class="filter-bar library-filters" method="get">
+  <input type="hidden" name="per_page" value="{{ per_page }}">
   <label class="search-field">Search
     <input type="search" name="q" value="{{ q }}" placeholder="Path, place, camera…">
   </label>
@@ -30,14 +32,19 @@
       <option value="false" {% if located is sameas false %}selected{% endif %}>No GPS</option>
     </select>
   </label>
+  <label>Group by
+    <select name="group">{{ grouping_options(grouping) }}</select>
+  </label>
   <button type="submit" class="secondary">Apply</button>
-  <a href="/photos" class="clear-filter">Clear</a>
+  <a href="/photos?group={{ grouping }}&amp;per_page={{ per_page }}" class="clear-filter">Clear</a>
   <span class="result-count">{{ "{:,}".format(total) }} photos</span>
 </form>
 
 {% if photos %}
 <div class="library-grid">
-  {% for photo in photos %}
+  {% for section in date_sections %}
+  {{ date_heading(section, grouping) }}
+  {% for photo in section.records %}
   <a class="library-photo" href="/photos/{{ photo.id }}">
     <div>
       {% if photo.thumb_path %}<img src="/media/{{ photo.thumb_path }}" alt="{{ photo.file_name }}" loading="lazy">{% else %}<div class="image-placeholder">{{ photo.analysis_status }}</div>{% endif %}
@@ -47,6 +54,7 @@
     <small>{% if photo.place_city %}{{ photo.place_city }}{% elif photo.camera_model %}{{ photo.camera_model }}{% else %}{{ photo.analysis_status }}{% endif %}</small>
   </a>
   {% endfor %}
+  {% endfor %}
 </div>
 {% else %}
 <div class="empty-state"><h3>No matching photos</h3><p>Change the filters or wait for the scanner to discover images.</p></div>
@@ -54,7 +62,7 @@
 
 {% if pages > 1 %}
 <nav class="pagination">
-  {% set suffix %}{% if selected_year %}&year={{ selected_year }}{% endif %}{% if faces is not none %}&faces={{ faces|string|lower }}{% endif %}{% if located is not none %}&located={{ located|string|lower }}{% endif %}{% if q %}&q={{ q|urlencode }}{% endif %}{% endset %}
+  {% set suffix %}&group={{ grouping }}&per_page={{ per_page }}{% if selected_year %}&year={{ selected_year }}{% endif %}{% if faces is not none %}&faces={{ faces|string|lower }}{% endif %}{% if located is not none %}&located={{ located|string|lower }}{% endif %}{% if q %}&q={{ q|urlencode }}{% endif %}{% endset %}
   {% if page > 1 %}<a href="?page={{ page - 1 }}{{ suffix }}">← Previous</a>{% endif %}
   <span>Page {{ page }} of {{ pages }}</span>
   {% if page < pages %}<a href="?page={{ page + 1 }}{{ suffix }}">Next →</a>{% endif %}

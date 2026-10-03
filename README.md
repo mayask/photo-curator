@@ -19,6 +19,16 @@ A self-hosted, local-first photo library analyzer that turns a large read-only a
 
 Every collection is a suggestion. Originals are never removed or modified. In the web UI you can keep/reject candidates, rate photos, rename suggested collections, change workflow status, and export a CSV manifest for printing or a later copy step.
 
+### Browsing and rebuilding
+
+Collections, their photos, and the library are displayed **newest first**. Collection recency uses the latest photo date, not the collection's machine score or the time it was rebuilt. The default timeline has horizontal year/month separators; **Group by** switches to yearly sections or an ungrouped grid. Filters and pagination preserve that choice, and unknown dates appear last. Date ranges remain visible on collection cards, including sets spanning several years.
+
+**Best of {year}** is a technical-quality shortlist, not an aesthetic model: sharpness, exposure, contrast, color, resolution, and any star ratings influence selection. Exact duplicates and similar burst frames are reduced, with at most five picks per day and up to 60 per year. Photos are then displayed newest first; the **Quality #** badge keeps their independent selection rank. **Keep best** selects by that rank, not by the first photos displayed.
+
+Use **Collections → Rebuild suggestions** or **Activity → Curate only** to regenerate curation from stored analysis. This does not scan the source or download photos. It preserves keep/reject decisions, notes, ratings, workflow status, and renamed titles. Old automatic suggestions that no longer qualify are removed if unreviewed; reviewed or renamed sets are retained.
+
+Trip suggestions now require evidence of departure **and return**: recurring GPS observations around the same base before and after a bounded period away. Dense photo sequences alone, long stays, and moves are not sufficient. The base is inferred from the surrounding time window, allowing it to change when you move. Sparse GPS or unreliable dates produce fewer trip suggestions rather than speculative ones.
+
 ## How analysis works
 
 Each supported photo is transferred from the NAS at most once per analysis version into a temporary local file. During that pass the worker:
@@ -114,6 +124,10 @@ The native SMB mode is simpler in Portainer and does not require a privileged co
 | `HOLIDAY_COUNTRY` | empty | Optional code such as `US`, `DE`, or `GB` |
 | `EVENT_GAP_HOURS` | `8` | Maximum gap inside a candidate event |
 | `GPS_CLUSTER_KM` | `25` | Broad place-cluster radius |
+| `TRIP_HOME_RADIUS_KM` | `30` | Radius of a recurring base and a return observation |
+| `TRIP_MIN_DISTANCE_KM` | `100` | Travel threshold; always at least twice the base radius |
+| `TRIP_MAX_DAYS` | `30` | Maximum departure-to-return interval for a trip suggestion |
+| `TRIP_CONTEXT_DAYS` | `90` | Surrounding GPS-day evidence window for the time-local base |
 
 All supported variables are documented in [`.env.example`](.env.example).
 

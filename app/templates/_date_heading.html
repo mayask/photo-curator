@@ -1,0 +1,14 @@
+{% macro date_heading(section, grouping) %}
+{% if grouping != 'none' %}
+<header class="date-divider" data-period="{{ section.key }}">
+  <h2>{{ section.label }}</h2>
+  <span>{{ section.records|length }} on this page</span>
+</header>
+{% endif %}
+{% endmacro %}
+
+{% macro grouping_options(grouping) %}
+<option value="month" {% if grouping == 'month' %}selected{% endif %}>Year &amp; month</option>
+<option value="year" {% if grouping == 'year' %}selected{% endif %}>Year</option>
+<option value="none" {% if grouping == 'none' %}selected{% endif %}>No groups</option>
+{% endmacro %}

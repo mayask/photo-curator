@@ -34,7 +34,18 @@ The expensive source-I/O phase is separate from collection generation. New heuri
 
 ### Events and trips
 
-Photos are ordered by capture time. A new event starts after a configurable time gap, a meaningful overnight gap, or rapid long-distance movement when both images have GPS. Dense adjacent event-days form trip candidates, bounded to avoid turning a whole year of daily photos into one trip.
+Photos are ordered by capture time. A new event starts after a configurable time gap, a meaningful overnight gap, or rapid long-distance movement when both images have GPS.
+
+Trips are separate, conservative away-and-return candidates, not just dense event runs:
+
+- use EXIF/filename dates rather than file modification times;
+- reduce GPS observations to one representative location vote per day, preventing a photo-heavy holiday from becoming the inferred base;
+- infer a recurring base from the preceding `TRIP_CONTEXT_DAYS` (default 90), requiring at least five observed days spanning two weeks and at least half the context's location days within `TRIP_HOME_RADIUS_KM` (30);
+- require a recent base observation, departure at least `TRIP_MIN_DISTANCE_KM` (100) away, and a return within `TRIP_MAX_DAYS` (30);
+- confirm the same recurring base in the following context, so a move or a brief visit to a former residence is not labelled a trip;
+- retain dense away photos between departure and return, omitting geolocated base photos, and require at least 12 photos and roughly three per photographed day.
+
+The rolling context follows changes of residence rather than assuming one lifetime home. Distances use GPS coordinates, not approximate reverse-geocoder labels. Ambiguous or incomplete journeys remain available as events/places but are not asserted to be trips. Same-day excursions and journeys without sufficient before/after GPS evidence are intentionally not inferred in this version. Pairwise location comparisons are limited to daily context windows, not the full photo library.
 
 Existing non-generic source folders containing 5–1,000 analyzed photos are also retained as album clues. Folder names often encode human knowledge (a trip, wedding, person, or project) that should complement rather than be discarded by automatic clustering.
 
@@ -80,7 +91,9 @@ The lightweight quality score combines:
 - print-resolution headroom; and
 - a small face-presence/prominence bonus.
 
-The score is only used for relative ordering. A diverse-selection pass limits one burst/duplicate family and prevents one heavily photographed day from dominating a year or global highlight set. User ratings contribute to future rankings while remaining separate from machine metrics.
+The score is only used for relative ranking, not chronological browsing. A diverse-selection pass limits one burst/duplicate family and prevents one heavily photographed day from dominating a year or global highlight set. User ratings contribute to future rankings while remaining separate from machine metrics. `Best of {year}` selects up to 60 photos, limits each day to five, removes exact duplicate hashes, and suppresses near-identical frames captured within ten minutes.
+
+All collection and photo browsing uses newest dates first. Collection dates are based on their photo range, not last rebuild time. Optional year/month dividers organize one bounded page at a time; headings and counts can repeat when a period spans pages. Quality ranks remain available as badges and drive the bulk `Keep best` action. A database-only curation rebuild preserves review decisions, notes, ratings, manually renamed titles, and workflow state.
 
 Learned aesthetic scoring (for example NIMA) could be an optional future plugin, but it introduces a large model and aesthetic bias. NIMA's original framing—predicting a distribution of human ratings rather than objective truth—is relevant:
 
@@ -121,7 +134,7 @@ Photo Book Curator is narrower: it leaves the source read-only, prioritizes expl
 - learned NIMA/MUSIQ aesthetic scorer as an opt-in model;
 - RAW sidecar extraction and video keyframes;
 - editable face names and merge/split controls;
-- home-location inference to distinguish trips from local events;
+- user-confirmed home/residence history to refine conservative trip inference;
 - map view and route-aware trip segmentation;
 - print-layout/contact-sheet PDF generation;
 - export/copy of kept originals to a separate writable destination;

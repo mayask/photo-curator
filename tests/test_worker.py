@@ -60,6 +60,7 @@ def test_recovery_preserves_attempt_count_and_requeues_jobs(settings):
     [
         ("analyzing", ["connect", "analyze", "collections"]),
         ("collections", ["collections"]),
+        ("curating", ["collections"]),
     ],
 )
 def test_full_job_resumes_from_durable_phase(

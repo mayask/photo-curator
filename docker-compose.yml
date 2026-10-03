@@ -49,10 +49,14 @@ services:
       EVENT_GAP_HOURS: "${EVENT_GAP_HOURS:-8}"
       BURST_GAP_SECONDS: "${BURST_GAP_SECONDS:-45}"
       GPS_CLUSTER_KM: "${GPS_CLUSTER_KM:-25}"
+      TRIP_HOME_RADIUS_KM: "${TRIP_HOME_RADIUS_KM:-30}"
+      TRIP_MIN_DISTANCE_KM: "${TRIP_MIN_DISTANCE_KM:-100}"
+      TRIP_MAX_DAYS: "${TRIP_MAX_DAYS:-30}"
+      TRIP_CONTEXT_DAYS: "${TRIP_CONTEXT_DAYS:-90}"
       SKIP_DIRECTORIES: "${SKIP_DIRECTORIES:-@eaDir,#recycle,.snapshot,.thumbnails}"
       SUPPORTED_EXTENSIONS: "${SUPPORTED_EXTENSIONS:-.jpg,.jpeg,.jpe,.png,.webp,.heic,.heif,.tif,.tiff,.bmp,.gif}"
       ANALYSIS_VERSION: "${ANALYSIS_VERSION:-1}"
-      COLLECTION_VERSION: "${COLLECTION_VERSION:-1}"
+      COLLECTION_VERSION: "${COLLECTION_VERSION:-2}"
     ports:
       - "${WEB_PORT:-8787}:8000"
     volumes:

@@ -193,7 +193,7 @@ class WorkerService:
         run_collections = kind in {"full", "collections"}
         if kind == "full" and resume_phase == "analyzing":
             run_scan = False
-        elif kind == "full" and resume_phase == "collections":
+        elif kind == "full" and resume_phase in {"curating", "collections"}:
             run_scan = False
             run_analyze = False
 

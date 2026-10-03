@@ -3,10 +3,12 @@ from __future__ import annotations
 import csv
 import io
 import logging
+from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime
+from itertools import groupby
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal, TypeVar
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -26,6 +28,40 @@ from app.worker import WorkerService
 logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 DbSession = Annotated[Session, Depends(get_db)]
+DateGrouping = Literal["none", "year", "month"]
+T = TypeVar("T")
+
+
+def _date_sections(
+    records: Sequence[T], date_for: Callable[[T], datetime | None], grouping: DateGrouping
+) -> list[dict[str, object]]:
+    """Group one chronologically ordered page, keeping unknown dates last."""
+    if grouping == "none":
+        return [{"key": "", "label": "", "records": records}]
+
+    def period(record: T) -> str:
+        value = date_for(record)
+        if value is None:
+            return "unknown"
+        year = f"{value.year:04d}"
+        return f"{year}-{value.month:02d}" if grouping == "month" else year
+
+    sections = []
+    for key, items in groupby(records, key=period):
+        label = "Unknown date" if key == "unknown" else key
+        if grouping == "month" and key != "unknown":
+            label = datetime.strptime(key, "%Y-%m").strftime("%B %Y")
+        sections.append({"key": key, "label": label, "records": list(items)})
+    return sections
+
+
+def _collection_date_order():
+    # Collection contents, not rebuild time or machine quality, define recency.
+    return (
+        func.coalesce(Collection.ends_at, Collection.starts_at).desc().nulls_last(),
+        Collection.starts_at.desc().nulls_last(),
+        Collection.id.desc(),
+    )
 
 
 class DecisionBody(BaseModel):
@@ -209,7 +245,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
                 select(Collection)
                 .options(selectinload(Collection.cover_photo))
                 .where(Collection.status != "hidden")
-                .order_by(desc(Collection.score), desc(Collection.updated_at))
+                .order_by(*_collection_date_order())
                 .limit(12)
             )
         )
@@ -241,6 +277,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
         status: str | None = None,
         page: Annotated[int, Query(ge=1)] = 1,
         per_page: Annotated[int, Query(ge=20, le=120)] = 60,
+        group: DateGrouping = "month",
     ):
         conditions = []
         if kind:
@@ -257,7 +294,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
                 select(Collection)
                 .options(selectinload(Collection.cover_photo))
                 .where(*conditions)
-                .order_by(desc(Collection.score), desc(Collection.updated_at))
+                .order_by(*_collection_date_order())
                 .offset((page - 1) * per_page)
                 .limit(per_page)
             )
@@ -281,6 +318,11 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
             request,
             "collections.html",
             collections=collections,
+            date_sections=_date_sections(
+                collections, lambda item: item.ends_at or item.starts_at, group
+            ),
+            grouping=group,
+            per_page=per_page,
             counts=counts,
             kinds=kinds,
             selected_kind=kind,
@@ -300,12 +342,14 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
             str | None, Query(pattern="^(pending|keep|reject)$")
         ] = None,
         per_page: Annotated[int, Query(ge=20, le=200)] = 80,
+        group: DateGrouping = "month",
     ):
         collection = db.get(Collection, collection_id)
         if not collection:
             raise HTTPException(404, "Collection not found")
         link_query = (
             select(CollectionPhoto)
+            .join(CollectionPhoto.photo)
             .options(selectinload(CollectionPhoto.photo))
             .where(CollectionPhoto.collection_id == collection_id)
         )
@@ -321,7 +365,9 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
         ) or 0
         links = list(
             db.scalars(
-                link_query.order_by(CollectionPhoto.rank)
+                link_query.order_by(
+                    Photo.capture_at.desc().nulls_last(), Photo.id.desc()
+                )
                 .offset((page - 1) * per_page)
                 .limit(per_page)
             )
@@ -338,6 +384,9 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
             "collection_detail.html",
             collection=collection,
             links=links,
+            date_sections=_date_sections(links, lambda item: item.photo.capture_at, group),
+            grouping=group,
+            per_page=per_page,
             page=page,
             pages=max(1, (total + per_page - 1) // per_page),
             total=total,
@@ -356,6 +405,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
         located: str | None = None,
         q: Annotated[str | None, Query(max_length=200)] = None,
         per_page: Annotated[int, Query(ge=20, le=200)] = 80,
+        group: DateGrouping = "month",
     ):
         selected_year = _optional_year(year)
         selected_faces = _optional_bool(faces, "faces")
@@ -391,7 +441,7 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
             db.scalars(
                 select(Photo)
                 .where(*conditions)
-                .order_by(Photo.capture_at.desc(), Photo.id.desc())
+                .order_by(Photo.capture_at.desc().nulls_last(), Photo.id.desc())
                 .offset((page - 1) * per_page)
                 .limit(per_page)
             )
@@ -410,6 +460,9 @@ def create_app(settings: Settings | None = None, start_worker: bool = True) -> F
             request,
             "photos.html",
             photos=photos,
+            date_sections=_date_sections(photos, lambda item: item.capture_at, group),
+            grouping=group,
+            per_page=per_page,
             page=page,
             pages=max(1, (total + per_page - 1) // per_page),
             total=total,

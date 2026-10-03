@@ -97,6 +97,13 @@ button:hover, .button:hover { transform: translateY(-1px); }
 .collection-copy { padding: 19px 20px 18px; }
 .collection-copy h3 { margin: 0 0 8px; font: 500 20px/1.2 Georgia, serif; }
 .collection-copy p { height: 42px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.card-date { margin: 0 0 8px; color: var(--green); font-size: 11px; }
+.date-divider { grid-column: 1 / -1; display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-top: 14px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.date-divider h2 { margin: 0; font: 500 27px/1.2 Georgia, serif; }
+.date-divider > span { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.curation-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 7px; }
+.curation-actions small, .control-hint { color: var(--muted); font-size: 11px; }
+.review-view { margin-bottom: 14px; }
 .card-meta { min-height: 24px; display: flex; align-items: center; gap: 9px; margin-top: 15px; color: var(--muted); font-size: 10px; }
 .card-meta .kept { color: var(--green); font-weight: 700; }
 .status-label { display: inline-flex; align-items: center; width: fit-content; padding: 3px 7px; background: #e9e9e3; border-radius: 100px; color: #68716c; font-size: 9px; font-weight: 750; letter-spacing: .05em; text-transform: uppercase; }
@@ -126,7 +133,7 @@ progress::-webkit-progress-value { background: var(--green); }
 progress::-moz-progress-bar { background: var(--green); }
 
 .panel { padding: 28px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
-.filter-bar { display: flex; align-items: flex-end; gap: 13px; margin-bottom: 28px; padding: 15px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+.filter-bar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 13px; margin-bottom: 28px; padding: 15px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
 .filter-bar label, .review-controls label { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: 9px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
 select, input { min-height: 37px; padding: 7px 11px; color: var(--ink); background: #fafaf6; border: 1px solid var(--line); border-radius: 8px; outline: none; }
 select:focus, input:focus { border-color: #7c9a88; box-shadow: 0 0 0 3px rgb(36 92 70 / 8%); }

@@ -10,6 +10,7 @@
   </div>
   <div class="collection-copy">
     <h3>{{ collection.title }}</h3>
+    {% if collection.starts_at or collection.ends_at %}<div class="card-date">{{ (collection.starts_at or collection.ends_at).strftime('%b %-d, %Y') }}{% if collection.starts_at and collection.ends_at and collection.ends_at.date() != collection.starts_at.date() %} – {{ collection.ends_at.strftime('%b %-d, %Y') }}{% endif %}</div>{% endif %}
     <p>{{ collection.description|truncate(115) }}</p>
     <div class="card-meta">
       {% if counts and collection.id in counts %}

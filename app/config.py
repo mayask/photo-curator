@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     event_gap_hours: float = Field(default=8.0, gt=0, le=168)
     burst_gap_seconds: int = Field(default=45, ge=1, le=3600)
     gps_cluster_km: float = Field(default=25.0, gt=0, le=1000)
+    trip_home_radius_km: float = Field(default=30.0, gt=0, le=200)
+    trip_min_distance_km: float = Field(default=100.0, gt=0, le=20_000)
+    trip_max_days: int = Field(default=30, ge=1, le=90)
+    trip_context_days: int = Field(default=90, ge=30, le=365)
 
     skip_directories: str = "@eaDir,#recycle,.snapshot,.thumbnails"
     supported_extensions: str = (
@@ -71,7 +75,7 @@ class Settings(BaseSettings):
     )
 
     analysis_version: int = 1
-    collection_version: int = 1
+    collection_version: int = 2
 
     @field_validator("smb_path")
     @classmethod
